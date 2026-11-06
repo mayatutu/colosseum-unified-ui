@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>评测工作站</title><style>
+:root{color-scheme:light dark;--bg:#f3e8dc;--panel:#fff8ef;--fg:#30231b;--mut:#806e60;--line:#d9c5b3;--accent:#b94e22;--ok:#268159;--bad:#b84b42}
+@media(prefers-color-scheme:dark){:root{--bg:#211811;--panel:#30231b;--fg:#f6e6d6;--mut:#c3a991;--line:#574131;--accent:#ef9a67;--ok:#61ce98;--bad:#f08b82}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,sans-serif}
+.hubbar{padding:12px 20px;border-bottom:1px solid var(--line);display:flex;gap:12px;align-items:center;flex-wrap:wrap;background:var(--panel)}
+.hubbar strong{font-size:17px}button,select,input{font:inherit;color:inherit;border:1px solid var(--line);background:var(--panel);border-radius:10px;padding:8px 12px}button{cursor:pointer}button:disabled{opacity:.5;cursor:wait}button.primary{background:var(--accent);color:var(--bg);font-weight:600}.spacer{flex:1}#robotPicker{min-width:180px;max-width:320px}.hint{color:var(--mut);font-size:13px}
+#robotStatuses{display:flex;gap:8px;padding:8px 20px;flex-wrap:wrap}#robotStatuses button{font-size:13px;padding:5px 12px}#robotStatuses button.active{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}.dot{color:var(--ok)}.offline{color:var(--bad)}
+#frames iframe{width:100%;height:calc(100dvh - 145px);min-height:500px;border:0;display:block}#frames iframe[hidden]{display:none}.empty{max-width:680px;margin:50px auto;padding:30px;border:1px solid var(--line);border-radius:18px;background:var(--panel)}[hidden]{display:none!important}
+.modal{position:fixed;inset:0;background:#0008;z-index:100;display:grid;place-items:center;padding:18px}.card{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:26px;width:min(560px,100%);max-height:90dvh;overflow:auto}.wide{width:min(900px,100%)}h2{margin-top:0}label{display:block;margin:16px 0 6px}input{width:100%}.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.actions{justify-content:flex-end;margin-top:24px}.error{color:var(--bad)}table{border-collapse:collapse;width:100%;margin-top:18px}td,th{padding:10px;text-align:left;border-bottom:1px solid var(--line)}.table-wrap{overflow:auto}#hubError{padding:0 20px}
+@media(max-width:600px){.hubbar{padding:10px;gap:8px}.spacer{display:none}#robotPicker{min-width:140px;flex:1}#robotStatuses{padding:8px 10px}#frames iframe{height:calc(100dvh - 210px)}}
+</style></head><body>
+<div class="hubbar"><strong>Robots</strong><select id="robotPicker" aria-label="Select robot"></select><button id="addRobot">+ Add robot</button><button id="editRobot">Edit</button><span class="spacer"></span><button id="allStats">All robots statistics</button><button id="language">English</button></div>
+<div id="robotStatuses" aria-label="Robot status"></div><p id="hubError" class="error" role="status"></p>
+<div id="offlinePanel" class="empty" hidden><h2 id="offlineName" data-user-text></h2><p>Workstation unavailable or not yet running the compatible UI</p><p class="hint">Adding a robot does not start its services. Check the address and its UI deployment.</p><button id="retryRobot">Refresh status</button></div>
+<main id="frames"></main>
+<div id="robotDialog" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="robotDialogTitle"><form id="robotForm" class="card">
+<h2 id="robotDialogTitle">Add robot</h2><label for="robotName">Robot name</label><input id="robotName" required placeholder="e.g. Franka 1">
+<label for="robotAddress">Client workstation IP / URL</label><input id="robotAddress" placeholder="franka-client.example.invalid">
+<p class="hint">Default port: 8772. Use the computer running Client, not the Policy or robot controller address.</p>
+<p class="hint">Robot type and identity are detected automatically when its service is available.</p><p id="robotFormError" class="error" role="alert"></p>
+<div class="row actions"><button type="button" id="robotCancel">Cancel</button><button class="primary" id="robotSave" type="submit">Save and check connection</button></div></form></div>
+<div id="allStatsDialog" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="allStatsTitle"><div class="card wide"><h2 id="allStatsTitle">All robots statistics</h2>
+<div class="row"><label for="hubStatsDate">Date</label><input style="width:auto" type="date" id="hubStatsDate"><button id="hubStatsRefresh">Refresh</button><button id="allStatsClose">Close</button></div>
+<p class="hint">Beijing time. Offline workstations are marked unavailable, not counted as zero.</p><p id="hubStatsNotice" role="status"></p>
+<div class="table-wrap"><table><thead><tr><th>Date</th><th>Person</th><th>Robot</th><th>A/B pairs</th></tr></thead><tbody id="hubStatsRows"></tbody></table></div></div></div>
+<script src="/i18n.js"></script><script src="/hub.js"></script>
+</body></html>

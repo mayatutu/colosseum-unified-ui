@@ -1,0 +1,14 @@
+# Candidate only. Start on the Franka workstation only after migration approval.
+robot: franka
+client_root: /path/to/franka-workspace/repos/colosseum-client-local
+client_python: /path/to/franka-workspace/envs/droid-client/bin/python
+robot_config: /path/to/franka-workspace/private/robot-minipc.yaml
+database: ../data/franka.sqlite3
+people: []
+feedback_generation_enabled: false
+robot_rpc: tcp://robot-controller.example.invalid:4242
+maintenance:
+  root: /path/to/franka-workspace/colosseum-eval-web
+  python: /path/to/legacy-env/bin/python
+  url: http://127.0.0.1:8080
+# Credentials remain on the Policy host. No credentials are included in this package.

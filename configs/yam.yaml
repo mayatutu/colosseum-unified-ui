@@ -1,0 +1,15 @@
+# Candidate only. Start on the YAM workstation only after migration approval.
+robot: yam
+client_root: /path/to/colosseum-client
+client_python: /path/to/colosseum-client/.venv/bin/python
+robot_config: /path/to/colosseum-client/configs/robot.yam.yaml
+database: ../data/yam.sqlite3
+people: []
+feedback_generation_enabled: false
+policy_config: /path/to/policy-server/configs/local-runtime-yam-agent.yaml
+maintenance:
+  root: /path/to/legacy-web
+  python: /path/to/legacy-web/.venv/bin/python
+  url: http://127.0.0.1:8080
+# URLs are read from the installed Policy config, or may be explicitly specified here.
+# provider_urls: {openai: https://your-configured-service/v1}

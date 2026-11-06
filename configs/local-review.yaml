@@ -1,0 +1,7 @@
+# Local code review only: real candidate UI, empty records, no maintenance backend.
+robot: yam
+client_root: /path/to/workspace/Official/colosseum-client-main
+client_python: /path/to/workspace/Official/colosseum-client-main/.planning/colosseum-ui-offline-review/original-runtime312/Scripts/python.exe
+robot_config: local-client.yaml
+database: ../data/local-review.sqlite3
+people: []

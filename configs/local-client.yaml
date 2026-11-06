@@ -1,0 +1,13 @@
+# No live Router or robot. Does not create fake evaluations or successful check states.
+url: ws://127.0.0.1:1
+token: local-review-not-a-real-token
+api_url: http://127.0.0.1:1
+cameras: {}
+robot_type: yam
+test: true
+recording: true
+skip_upload: true
+evaluation_dir: /path/to/workspace/deployment/colosseum-unified-ui-v1/data/local-review-evaluations
+institution: local-code-review
+policy_server_url: ''
+max_trial_steps: 800
