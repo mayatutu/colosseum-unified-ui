@@ -143,6 +143,10 @@ pre{background:var(--glass2);border:1px solid var(--line);border-radius:12px;pad
 .modal{position:fixed;inset:0;background:rgba(30,18,10,.55);display:none;place-items:center;z-index:20;padding:20px}
 .modal.on{display:grid;animation:rise .25s}
 .modal .card{max-width:540px;width:100%;padding:30px}
+#modal .card{max-width:820px;max-height:92vh;overflow:auto;background:var(--bg)}
+.scene-reference-images{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:12px 0}
+.scene-reference-images img{width:100%;height:auto;display:block;border-radius:10px}
+@media(max-width:600px){.scene-reference-images{grid-template-columns:1fr}}
 .modal h2{font:500 26px var(--serif);margin-bottom:8px}
 .modal .acts{display:flex;gap:10px;justify-content:flex-end;margin-top:22px;flex-wrap:wrap}
 .revgrid{display:grid;grid-template-columns:310px 1fr;gap:20px;align-items:start}
@@ -276,12 +280,12 @@ header .steps{width:100%;display:grid;grid-template-columns:repeat(2,1fr)}header
         <div id="runModels" data-user-text style="margin-top:12px;overflow-wrap:anywhere"></div><div class="timeline" id="timeline"></div>
         <div id="runMsg" class="banner info" style="display:none"></div>
         <div id="killBox">
-          <button class="kill" id="killBtn">■ STOP POLICY<small>Keeps the recording so far · arms return to zero · then the next policy <kbd>Esc</kbd></small></button>
-          <button id="doneBtn" style="width:100%;margin-top:10px">✓ Task done, end this run</button>
+          <button class="kill" id="killBtn">■ 提前结束当前模型<small>保留已录数据 · 回位后 A 继续 B，B 进入评分 <kbd>Esc</kbd></small></button>
+          <button id="doneBtn" style="width:100%;margin-top:10px">✓ 任务已完成，结束当前模型</button>
           <p class="mut" style="font-size:12px;margin:10px 0 0">This is a software stop. In an emergency, press the physical stop button.</p>
         </div>
         <div id="doneBox" style="display:none"><button class="primary big" id="toReview" style="width:100%">Score this evaluation →</button></div>
-        <div id="errBox" style="display:none"><button class="big" id="backForm" style="width:100%">Back to the form</button></div>
+        <div id="errBox" style="display:none"><p>本轮发生错误。重开会删除这轮 A/B 录像和参考图，清空旧任务并返回新任务填写页。无需填写原因或评分。</p><button class="big" id="backForm" style="width:100%">重开一轮</button><p id="recoveryError" role="alert"></p></div>
       </div>
     </div>
     <details class="log"><summary>Technical log</summary><pre id="log"></pre></details>
@@ -320,6 +324,7 @@ header .steps{width:100%;display:grid;grid-template-columns:repeat(2,1fr)}header
 
 <div class="modal" id="modal"><div class="card">
   <h2 id="mTitle"></h2><p class="mut" id="mBody" style="margin:0"></p>
+  <div id="mReference" hidden></div><p id="mError" role="alert" class="bad"></p>
   <div id="mInput" style="display:none;margin-top:14px"><input id="mText"></div>
   <div class="acts" id="mActs"></div>
 </div></div>
@@ -361,10 +366,10 @@ function mood(){
   AMB.mood(m);AMB.camera(view=='record'&&(ST&&(ST.preview||ST.recording)));
 }
 
-function show(v){view=v;document.querySelectorAll('.view').forEach(e=>e.classList.toggle('on',e.id=='v-'+v));
+function show(v,autoPreview=true){view=v;document.querySelectorAll('.view').forEach(e=>e.classList.toggle('on',e.id=='v-'+v));
   document.querySelectorAll('.steps button').forEach(b=>b.classList.toggle('on',b.dataset.v==v));
   if(v=='review')loadEvals(); if(v=='stats')loadStats();
-  if(v=='record'){loadResumable();if(ST&&!ST.recording&&!ST.preview)togglePreview(true)}else if(ST&&!ST.recording&&ST.preview)togglePreview(false);
+  if(v=='record'){loadResumable();if(autoPreview&&ST&&ST.run.phase==='idle'&&!ST.recording&&!ST.preview)togglePreview(true)}else if(ST&&!ST.recording&&ST.preview)togglePreview(false);
   mood()}
 document.querySelectorAll('.steps button').forEach(b=>b.onclick=()=>show(b.dataset.v));
 
@@ -414,7 +419,7 @@ $('#pvBtn').onclick=()=>togglePreview(true);
 async function loadResumable(){
   const evs=await allEvaluations();
   const sel=$('#resume'),cur=sel.value;
-  sel.innerHTML='<option value="">— start a new one —</option>'+evs.filter(e=>e.state=='interrupted').map(e=>`<option value="${e.id}">${esc(e.instruction)} · ${new Date(e.time*1000).toLocaleString()}</option>`).join('');sel.value=cur;
+  sel.innerHTML='<option value="">— start a new one —</option>'+evs.filter(e=>e.state=='interrupted'&&!e.recording_error).map(e=>`<option value="${e.id}">${esc(e.instruction)} · ${new Date(e.time*1000).toLocaleString()}</option>`).join('');sel.value=cur;
   const pend=evs.filter(e=>e.managed&&!['submitted','discarded'].includes(e.state));
   $('#pendingBanner').innerHTML=pend.length?`<div class="banner warn">⚠ <div><b><span data-user-text>“${esc(pend[0].instruction)}”</span> is recorded but not submitted.</b> Submit or discard this A/B pair before starting the next one. <a href="#" id="goPend" style="color:inherit">Score it first</a></div></div>`:'';
   if(pend.length)$('#goPend').onclick=e=>{e.preventDefault();evSel=pend[0].id;show('review')};
@@ -431,9 +436,30 @@ $('#killBtn').onclick=()=>stopRun('stopped');
 $('#doneBtn').onclick=()=>stopRun('completed');
 addEventListener('keydown',e=>{if(e.key=='Escape'&&ST&&ST.run.phase=='running'&&!$('#modal').classList.contains('on')){e.preventDefault();stopRun('stopped')}});
 $('#toReview').onclick=()=>{evSel=ST.run.eval_id;api('/api/eval/reset',{});show('review')};
-$('#backForm').onclick=()=>api('/api/eval/reset',{});
+let recoveryBusy=false;
+async function restartFailed(id,button){
+  if(recoveryBusy)return;recoveryBusy=true;button.disabled=true;
+  const message=$('#recoveryError');message.textContent='';
+  try{
+    if(id){
+      button.textContent='正在重开…';
+      await api('/api/evals/'+id,{action:'restart'});
+    }else{
+      await api('/api/eval/reset',{});
+    }
+    ST=await api('/api/state');
+    $('#instruction').value='';$('#scene').value='';$('#resume').value='';$('#maxsteps').value=CFG.max_steps;
+    writeDraft('station-form:'+STATION_KEY,{instruction:'',scene:'',evaluator:$('#evaluator').value,maxsteps:String(CFG.max_steps)});
+    try{localStorage.setItem('evform:'+STATION_KEY,JSON.stringify({scene:'',evaluator:$('#evaluator').value}))}catch(e){}
+    if(id)clearReviewDraft(id);evSel=null;$('#evdetail').replaceChildren();$('#lv').removeAttribute('src');
+    renderRun();renderPrompt();show('record',false);
+    toast('旧轮已清理。请填写新的任务，再点击“开始评测”。');
+  }catch(e){message.textContent=e.message;toast(e.message)}
+  finally{recoveryBusy=false;button.disabled=false;button.textContent='重开一轮'}
+}
+$('#backForm').onclick=()=>restartFailed(ST.run.eval_id,$('#backForm'));
 
-const PHASE={starting:'Starting',setup:'Waiting for you',prompt:'Waiting for you',loading:'Loading policy',running:'Running',stopping:'Stopping',homing:'Returning home',saving:'Saving',between:'Run finished',done:'Done',error:'Stopped'};
+const PHASE={starting:'Starting',setup:'Waiting for you',prompt:'Waiting for you',loading:'Loading policy',running:'Running',stopping:'Stopping',homing:'Returning home',saving:'Saving',between:'Run finished',done:'Done',error:'运行出错'};
 function renderRun(){
   const r=ST.run,active=ST.recording||['done','error'].includes(r.phase);
   $('#rec-form').style.display=active?'none':'';$('#rec-run').style.display=active?'':'none';
@@ -463,19 +489,43 @@ function renderRun(){
 }
 function renderPrompt(){
   const p=ST.prompt,m=$('#modal');
-  if(!p){m.classList.remove('on');lastPromptId=null;return}
+  if(!p){m.classList.remove('on');$('#mReference').replaceChildren();lastPromptId=null;return}
   if(p.id===lastPromptId)return;lastPromptId=p.id;
   $('#mTitle').textContent=p.title;$('#mBody').textContent=p.body;$('#mInput').style.display=p.kind=='text'?'':'none';$('#mText').value='';
+  $('#mError').textContent='';
+  const reference=ST.scene_reference,referenceBox=$('#mReference');referenceBox.hidden=true;referenceBox.replaceChildren();
+  let referencePending=0,referenceFailed=false;
+  if(p.kind==='scene'&&CFG.scene_reference_enabled){
+    if(reference&&reference.evaluation_id===ST.run.eval_id){
+      referencePending=reference.cameras.length;
+      referenceBox.hidden=false;
+      referenceBox.innerHTML='<h3>'+tr('Initial placement reference')+'</h3><p>'+tr('Restore the objects to match these photos before continuing.')+'</p><div class="scene-reference-images"></div>';
+      for(const camera of reference.cameras){
+        const figure=document.createElement('div'),label=document.createElement('div'),image=document.createElement('img');
+        label.textContent=tr(camera==='left_image'?'Left camera':'Right camera');image.alt=label.textContent;
+        image.src=stationURL('/api/scene-reference/'+encodeURIComponent(reference.evaluation_id)+'/'+camera+'.png?v='+encodeURIComponent(reference.version));
+        image.onload=()=>{referencePending--;if(!referencePending&&!referenceFailed)$('#mActs').querySelectorAll('.primary').forEach(b=>b.disabled=false)};
+        image.onerror=()=>{referenceFailed=true;$('#mError').textContent=tr('Reference image could not be loaded. Refresh before continuing.');$('#mActs').querySelectorAll('.primary').forEach(b=>b.disabled=true)};
+        figure.append(label,image);referenceBox.querySelector('.scene-reference-images').append(figure);
+      }
+    }else if(p.side==='A'){
+      $('#mBody').textContent=tr('Place the objects, then confirm. Left and right reference photos will be saved before the policy loads.');
+    }
+  }
   const acts={scene:[['Cancel evaluation','',null],['Start Policy '+(p.side||''),'primary','']],
     confirm:[['Cancel','','n'],['Start robot','primary','y']],
     text:[['Cancel','',null],['OK','primary','__text']],
     recovery:[['Skip and release power','danger','skip'],['Retry return','primary','retry']]}[p.kind];
   $('#mActs').innerHTML=acts.map(([l,c],i)=>`<button class="${c} big" data-i="${i}">${l}</button>`).join('');
-  $('#mActs').querySelectorAll('button').forEach(b=>b.onclick=()=>{let a=acts[b.dataset.i][2];
+  if(referencePending)$('#mActs').querySelectorAll('.primary').forEach(b=>b.disabled=true);
+  $('#mActs').querySelectorAll('button').forEach(b=>b.onclick=async()=>{let a=acts[b.dataset.i][2];
     if(p.kind=='recovery'&&a=='skip'&&!confirm('Support both arms by hand first. Releasing power lets them drop. Continue?'))return;
     if(p.kind=='scene'&&a===null&&!confirm('Cancel this evaluation? You can resume it later.'))return;
     if(a=='__text')a=$('#mText').value;
-    api('/api/eval/reply',{kind:p.kind,answer:a});m.classList.remove('on')});
+    $('#mActs').querySelectorAll('button').forEach(x=>x.disabled=true);$('#mError').textContent='';
+    try{await api('/api/eval/reply',{id:p.id,kind:p.kind,answer:a});if(lastPromptId===p.id)m.classList.remove('on')}
+    catch(e){if(lastPromptId===p.id){$('#mError').textContent=tr(e.message);$('#mActs').querySelectorAll('button').forEach(x=>x.disabled=false)}}
+  });
   m.classList.add('on');if(p.kind!='recovery'&&view!='record')show('record');
 }
 
@@ -504,6 +554,10 @@ const FACT=[['speed','Speed'],['smoothness','Smoothness'],['safety','Safety'],['
 const fopts=f=>[['A2','Better'],['A1','Slightly better'],f=='safety'?['none','No eval']:['tie','Tie'],['B1','Slightly better'],['B2','Better']];
 async function loadDetail(id){
   const d=await api('/api/evals/'+id).catch(e=>{toast(e.message)});if(!d)return;
+  if((d.recording_error||d.error_recovery)&&d.state!=='submitted'&&!d.error_recovery?.cleanup_complete){
+    $('#evdetail').innerHTML=`<div class="card"><h2>本轮评测发生错误</h2><p data-user-text>${esc(d.recording_error||'本轮故障清理未完成')}</p><p>删除这轮 A/B 录像和参考图，清空旧任务并返回新任务填写页。无需填写原因或评分。</p><button id="restartFailed" ${d.busy?'disabled':''}>重开一轮</button></div>`;
+    $('#restartFailed').onclick=()=>restartFailed(id,$('#restartFailed'));if(d.busy)pollBusy(id);return;
+  }
   const locked=['submitted','discarded','superseded'].includes(d.state)||d.busy, dis=locked?'disabled':'';pref=d.preference;factors={...(d.factors||{})};
   const names={head_image:'Top',left_image:'Left wrist',right_image:'Right wrist'};
   const stopNote=s=>!s?'':s.reason=='stopped'?`<div class="banner bad" style="margin:12px 0 0">■ Stopped by the evaluator at step ${s.step}. Recorded up to that step.</div>`
@@ -521,7 +575,8 @@ async function loadDetail(id){
   const banner={unknown:'<div class="banner warn">Submission confirmation is pending. Check Router status before retrying.</div>',submitting:'<div class="banner info">Submitting scores…</div>',submitted:'<div class="banner ok">✓ Submitted to the Router. It can no longer be changed here.</div>',discarded:'<div class="banner bad">Discarded. Nothing was published.</div>',
     superseded:'<div class="banner">A newer evaluation replaced this one on the Router, so it can no longer be submitted.</div>',interrupted:'<div class="banner warn">This evaluation was interrupted before both runs were recorded. Continue it from Record → “Continue an interrupted evaluation”.</div>'}[d.state]||(d.busy?'<div class="banner info">Submitting scores. Dataset upload follows the station configuration.</div>':'');
   $('#evdetail').innerHTML=`<div class="card" style="margin-bottom:16px"><div class="spread"><div class="eyebrow">Task</div><span class="badge st-${d.state}">${LBL[d.state]}</span></div>
-    <div style="font:500 24px/1.25 var(--serif);margin-top:4px" data-user-text>${esc(d.instruction)}</div><div class="mut"><span>Scene:</span> <span data-user-text>${esc(d.scene)||'–'}</span> · <span style="font-family:ui-monospace,monospace;font-size:12px">${id}</span></div></div>
+    <div style="font:500 24px/1.25 var(--serif);margin-top:4px" data-user-text>${esc(d.instruction)}</div><div class="mut"><span>Scene:</span> <span data-user-text>${esc(d.scene)||'–'}</span> · <span style="font-family:ui-monospace,monospace;font-size:12px">${id}</span></div>
+    ${CFG.task_difficulty_enabled?`<label for="taskDifficulty">Task difficulty (1–10)</label><input id="taskDifficulty" type="number" min="1" max="10" step="1" inputmode="numeric" aria-required="true" style="max-width:160px" value="${esc(d.task_difficulty??'')}" ${dis}><p class="mut">1 is easiest; 10 is hardest. Enter once for this task; shared by A and B.</p>`:''}</div>
     ${banner}<div class="ab">${d.runs.map(side).join('')}</div>
     <div class="card" style="margin-top:16px"><label style="margin-top:0">Which policy did better?</label>
     <div class="seg">${[['A','A was better'],['tie','About the same'],['B','B was better']].map(([v,l])=>`<button data-pref="${v}" class="${pref==v?'on':''}" ${dis}>${l}</button>`).join('')}</div>
@@ -536,6 +591,7 @@ async function loadDetail(id){
   for(const r of d.runs){const rg=$('#rg-'+r.side),sc=$('#sc-'+r.side);if(!rg)continue;rg.oninput=()=>sc.value=rg.value;sc.oninput=()=>rg.value=sc.value}
   document.querySelectorAll('[data-pref]').forEach(b=>b.onclick=()=>{pref=b.dataset.pref;document.querySelectorAll('[data-pref]').forEach(x=>x.classList.toggle('on',x==b))});
   const body=action=>({action,preference:pref,feedback:$('#fb').value,
+    ...(CFG.task_difficulty_enabled?{task_difficulty:$('#taskDifficulty').value}:{}),
     ...Object.fromEntries(d.runs.map(r=>['score_'+r.side,$('#sc-'+r.side)?.value??'']))});
   if(locked){clearReviewDraft(id);return;}
   bindReviewDraft(id,d);
@@ -548,6 +604,8 @@ async function loadDetail(id){
     catch(e){toast(e.message)}finally{btn.disabled=false;btn.textContent='✨ Polish overall comment';fb.classList.remove('shimmer')}};
   $('#saveBtn').onclick=()=>api('/api/evals/'+id,body('save')).then(r=>{clearReviewDraft(id);toast(r.msg);loadEvals()}).catch(e=>toast(e.message));
   $('#submitBtn').onclick=()=>{if(d.runs.some(r=>$('#sc-'+r.side).value==='')||!pref)return toast('Give both runs a score and choose which was better.');
+    const difficulty=$('#taskDifficulty');
+    if(difficulty&&(!difficulty.value||!difficulty.checkValidity())){difficulty.focus();return toast('Task difficulty must be an integer from 1 to 10')}
     if(!$('#fb').value.trim()){$('#fb').focus();return toast('Overall feedback is required before submitting')}
     if(!confirm('Submit to the Router? Scores and feedback are submitted now. Dataset upload follows the station configuration. Continue?'))return;
     api('/api/evals/'+id,body('submit')).then(r=>{toast(r.msg||'Submitting scores…');loadEvals();pollBusy(id)}).catch(e=>toast(e.message))};

@@ -1,5 +1,18 @@
 /* Translate UI chrome only. User inputs, task text, raw logs and provider errors stay verbatim. */
 const ZH = {
+ 'Task difficulty (1–10)':'任务难度（1–10）',
+ '1 is easiest; 10 is hardest. Enter once for this task; shared by A and B.':'1 最容易，10 最难。每个任务填写一次，A/B 共用。',
+ 'Task difficulty is required before submitting':'请填写任务难度后再提交',
+ 'Task difficulty must be an integer from 1 to 10':'任务难度请填写 1 到 10 的整数',
+ 'Task difficulty cannot change after a dataset has been exported':'数据集已导出，不能再修改本任务的难度',
+ 'Initial placement reference':'任务初始摆放参考',
+ 'Restore the objects to match these photos before continuing.':'请对照参考图复位物品，确认后再继续。',
+ 'Left camera':'左侧相机','Right camera':'右侧相机',
+ 'Place the objects, then confirm. Left and right reference photos will be saved before the policy loads.':'摆放好物品后确认，系统会先保存左、右相机参考图，再继续任务。',
+ 'Both left and right cameras are required to save the initial scene':'保存初始摆放需要左、右相机均有画面，任务尚未启动',
+ 'The initial scene reference is missing; the trial has not started':'本任务的初始参考图缺失，本次运行尚未启动',
+ 'This confirmation has expired. Refresh the page.':'此确认已失效，请刷新页面',
+ 'Reference image could not be loaded. Refresh before continuing.':'参考图加载失败，请刷新后再继续。',
  'Statistics are read-only. This page shows the current workstation. Use All robots statistics in the top bar for the combined view.':'统计只读。本页显示当前工作站，汇总请使用顶部的“全部机器人统计”。',
  'Robots':'机器人','+ Add robot':'+ 添加机器人','Add robot':'添加机器人','Edit':'编辑','Edit robot':'编辑机器人',
  'Robot name':'机器人名称','Client workstation IP / URL':'Client 工作站 IP / 地址','e.g. Franka 1':'例如：Franka 1',

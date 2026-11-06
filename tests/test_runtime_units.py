@@ -116,3 +116,18 @@ def test_maintenance_stops_new_recording_then_uses_existing_command():
     runtime.policy = lambda method, **kw: calls.append(method) or {'ok': True}
     runtime.maintain('restart_docker')
     assert calls == ['stop_recording', 'stop_preview', 'restart_docker']
+
+
+def test_startup_restores_failed_round_without_starting_a_trial(monkeypatch):
+    runtime = object.__new__(Runtime)
+    calls = []
+    runtime.station = SimpleNamespace(robot='franka')
+    runtime.store = SimpleNamespace(pending=lambda robot: [{'id': 'ev_failed'}])
+    runtime.legacy = None
+    runtime.c = SimpleNamespace(rv=SimpleNamespace(load=lambda eid: {
+        'recording_error': 'controller timeout', 'assignment': {'task': {'instruction': 'pick'}}}),
+        S=SimpleNamespace(set_run=lambda **kw: calls.append(kw), set_check=lambda *a: None))
+    monkeypatch.setattr(threading, 'Thread', lambda **kw: SimpleNamespace(start=lambda: None))
+    runtime.startup()
+    assert calls == [dict(phase='error', eval_id='ev_failed', side=None, step=0,
+                          instruction='pick', message='controller timeout')]

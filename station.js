@@ -14,16 +14,18 @@ function bindStationFormDraft(){
 function clearReviewDraft(id){try{sessionStorage.removeItem('station-review:'+STATION_KEY+':'+id)}catch(e){}}
 function bindReviewDraft(id,d){
  const key='station-review:'+STATION_KEY+':'+id;
- const baseline=JSON.stringify([d.feedback,d.preference,d.runs.map(r=>[r.side,r.score])]);
+ const baseline=JSON.stringify([d.feedback,d.preference,d.runs.map(r=>[r.side,r.score]),d.task_difficulty]);
  const saved=readDraft(key);
  if(saved?.baseline===baseline){
   $('#fb').value=saved.feedback;pref=saved.preference;
+  if($('#taskDifficulty'))$('#taskDifficulty').value=saved.task_difficulty??'';
   for(const side of ['A','B'])if($('#sc-'+side)){$('#sc-'+side).value=saved['score_'+side];$('#rg-'+side).value=saved['score_'+side]||0}
   document.querySelectorAll('[data-pref]').forEach(b=>b.classList.toggle('on',b.dataset.pref===pref));
  }else if(saved)clearReviewDraft(id);
  const save=()=>writeDraft(key,{baseline,feedback:$('#fb').value,preference:pref,
+  task_difficulty:$('#taskDifficulty')?.value??'',
   score_A:$('#sc-A')?.value||'',score_B:$('#sc-B')?.value||''});
- for(const el of document.querySelectorAll('#fb,#sc-A,#sc-B,#rg-A,#rg-B'))el.addEventListener('input',save);
+ for(const el of document.querySelectorAll('#fb,#sc-A,#sc-B,#rg-A,#rg-B,#taskDifficulty'))el.addEventListener('input',save);
  for(const el of document.querySelectorAll('[data-pref]'))el.addEventListener('click',save);
 }
 window.addEventListener('message',e=>{

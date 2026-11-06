@@ -12,7 +12,7 @@
 - 不包含现场 IP、主机用户名、机器绝对路径、机构与评测标识、个人邮箱、真实密钥、历史截图或部署报告。
 - 工作站登记、独立页面、固定请求前缀和草稿隔离已实现，已有两个回环模拟站验证。
 - 真实双机并行及 Router 跨工作站隔离尚未验收，尤其是新评测前 `POST /reset` 的作用范围。
-- 既有部署最后状态为 YAM 新 UI 已停用、Franka 新 UI 未启用。取得本仓库不代表应立即启动设备服务。
+- Franka 新 UI 已在单站部署并使用；YAM 新 UI 仍停用。真实双机并行与 Router 隔离仍未验收。取得源码不代表设备已经配置或服务应自动启动。
 
 不同 institution、不同页面、不同本机数据库不能单独证明 Router 已隔离。模拟并发通过也不能替代实机验收。
 
@@ -52,6 +52,7 @@ flowchart LR
 | `eval_gui.html`、`station.js`、`i18n.js` | 设置、录制、回放评分、统计、中英文 |
 | `station.py`、`runtime.py`、`legacy_host.py` | 配置、原评测流程、旧维护后台适配 |
 | `store.py`、`submission.py`、`client_job.py` | 账本、提交确认、原 Client 导出和上传 |
+| `task_annotations.py`、`scene_reference.py`、`error_recovery.py` | 任务难度、临时初始摆放照片、失败轮次清理 |
 | `configs/` | 需要按现场填写的无凭据模板 |
 | `upstream/` | 已脱敏的 UI/录制/回放参考代码；哈希对应这些副本 |
 | `tests/` | 独立单元测试、依赖原 Client 的契约测试、浏览器测试 |
@@ -144,7 +145,7 @@ cp configs/franka.yaml configs/franka.local.yaml
 
 `0.0.0.0` 表示监听本机所有网卡，不是某台设备的 IP。浏览器使用本机实际主机名访问 `/`，单站布局入口为 `/station`。`app.py` 默认只监听本机回环接口和端口 `8770`，网络访问必须显式选择绑定参数。
 
-`bash start-yam.sh 8772` 固定读取 `configs/yam.yaml`，不会选择 `.local.yaml`；采用私有配置时使用上面的显式启动命令。
+`bash start-yam.sh 8772` / `bash start-franka.sh 8772` 固定读取各自模板 YAML，不会选择 `.local.yaml`；采用私有配置时使用上面的显式启动命令。
 
 YAM 优先复用运行中的旧 Web；旧 Web 不可用时可能加载旧后台，执行其 Policy 自动启动和 watchdog。Franka 原启动以健康检查为主；手动恢复仍属真实服务操作。仓库没有设置自动开机启动。
 
@@ -199,19 +200,31 @@ YAM 的模型密钥覆盖写入本机 `data/llm-settings.json`，不改原机器
 ### 录制
 
 1. 选择人员、填写任务指令、场景、最大步数。新建时固定人员归属，恢复中断组沿用原归属。
-2. 当前站有未完成组时，先提交或确认放弃它。
+2. 当前站有未完成组时，先完成它；报错轮次按下述“重开一轮”流程清理。
 3. 点击开始，按原 Client 提示准备场景并分别确认 A/B。
 4. 查看模型名、执行侧、状态、日志、画面和步数；结束一侧后等待保存及归位，再继续。
 5. A/B 录制完成后进入回放评分。
+
+Franka 首次确认摆放时保存左、右相机各一张初始位置参考图，B 侧摆放时展示，便于复位。照片仅留在本机，不进入 LeRobot 数据集；两侧录制完成或该轮被清理后删除。抓图失败会保留确认框并显示原因。
+
+“提前结束当前模型”保留本侧录像并进入正常收尾：A 结束后继续 B，B 结束后进入评分；控制器真实报错仍进入错误流程。它不是物理急停。
+
+### 报错后重开一轮
+
+点击“重开一轮”会清理失败轮次的本地 A/B 录像、参考图和预览缓存，并关闭其本地待处理记录；保留诊断清单和日志。清理完成后返回空白任务表单，清空旧指令、场景、恢复选择和草稿，保留人员。无需为失败轮次评分或填写放弃原因。
+
+此操作不重试旧任务、不自动启动上一任务、不单独向 Router 请求放弃。只有重新填写任务并点击“开始评测”后，才由原 Client 执行正常的新任务流程（包含 `/reset` 和 `/next`）。已提交或正在处理的记录受保护，不能通过此路径删除。清理数据不会修复控制器、Policy 或网络故障，应先根据错误恢复相应设备。
 
 检查未就绪时界面仍可能询问是否继续，这不是就绪证明。Policy 进入保持姿态后 Client 可能继续计步，不能仅凭步数判断仍有有效动作。
 
 ### 回放、评分和提交
 
 - 查看 A/B 模型与多路回放；支持播放、暂停、重播、调速和同步拖动，网关保留 HTTP Range。
+- Franka 每个任务填写一次人工难度，输入整数 **1–10**（1 最容易，10 最难），A/B 共用；不填写分母。提交前必填。
+- 难度保存在任务 manifest，并通过原 Client 导出到 **A、B 各自的 `lerobot/meta/colosseum.json`**：`task_difficulty` 为填写值，`task_difficulty_scale` 为 10。旧数据不会自动补填；导出后不能改变该值。
 - 填写两项完成度、整体偏好和一段总评。旧分侧文字及比较因子仍保留在历史数据中，精简界面不覆盖它们。
 - 保存草稿时总评可为空；提交时总评必须非空，纯空格不通过。不强制英文，不自动评分。
-- 提交后等待确认。放弃要求填写原因，保留录制文件，不计工作量。
+- 提交后等待确认。普通回放页的放弃仍要求原因、保留录制文件且不计工作量；报错后的“重开一轮”使用上面的本地清理流程。
 
 ### 翻译、AI 与草稿
 
@@ -250,13 +263,13 @@ AI 总评整理默认关闭。设为 YAML 布尔值 `true` 并重启后仍需要
 
 ```bash
 python3 -m venv .venv-test
-.venv-test/bin/python -m pip install -r requirements-gui.txt pytest httpx
-.venv-test/bin/python -m pytest tests/test_station_hub.py tests/test_api.py tests/test_store.py tests/test_station.py tests/test_maintenance.py tests/test_evaluation_lock.py tests/test_runtime_units.py -q
+.venv-test/bin/python -m pip install -r requirements-gui.txt pytest httpx numpy Pillow
+.venv-test/bin/python -m pytest tests/test_station_hub.py tests/test_api.py tests/test_store.py tests/test_station.py tests/test_maintenance.py tests/test_evaluation_lock.py tests/test_runtime_units.py tests/test_task_annotations.py tests/test_error_recovery.py -q
 ```
 
 Windows 使用 `.venv-test\Scripts\python.exe`。这些选定测试使用临时数据和替身，不访问真实机器人或 Router；Linux 虚拟环境软链接测试在 Windows 跳过。
 
-脱敏版已执行上述定向测试：48 项通过、1 项平台限制跳过；Python 3.12 和 JavaScript 语法检查、文档链接检查及隐私检查通过。另用临时仓库验证检查器能拦截仅留在暂存区或旧历史中的敏感信息，且不会打印敏感值。
+本次发布同步已部署的任务难度、场景参考图、确认框竞态和失败轮次清理修复；验证覆盖定向单元测试、原 Client A/B 流程契约、Python/JavaScript 语法及隐私检查。另用临时仓库验证检查器能拦截仅留在暂存区或旧历史中的敏感信息，且不会打印敏感值。
 
 全量测试包含依赖原工作区 Client、Franka 基线和独立 Python 环境的契约测试。仅克隆本仓库不能保证全量可复现，先阅读测试中的路径和跳过条件。
 

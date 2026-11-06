@@ -97,8 +97,10 @@ class LegacyHost:
     def startup_check(self):
         if self.module and self.robot == 'franka':
             # Exact existing health check, including loaded model worker detection.
-            ok = self.module.start_policy_server()
-            return {'ok': bool(ok), 'external': self.external, 'detail': 'Franka Policy startup check', 'last': self.last}
+            result = self.module.start_policy_server()
+            ok, message = result if isinstance(result, tuple) else (result, '')
+            return {'ok': bool(ok), 'external': self.external,
+                    'detail': message or 'Franka Policy startup check', 'last': self.last}
         return self.status()
 
     def status(self):

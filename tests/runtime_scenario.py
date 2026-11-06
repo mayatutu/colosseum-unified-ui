@@ -83,6 +83,12 @@ with tempfile.TemporaryDirectory(prefix='unified-ui-contract-') as tmp:
         (path / 'recording-status.json').write_text('{"complete":true}')
         (path / 'recording-context.json').write_text(json.dumps({'fps': 15, 'robot_type': robot,
             'test': True, 'action_space': 'joint_position', 'execution_enabled': False}))
+        if scenario == 'error_restart' and len(assignments) == 1:
+            raise RuntimeError('Injected controller return-home timeout')
+        if scenario == 'manual_finish':
+            runtime.c.S.set_run(phase='running')
+            runtime.c.finish_now({'reason': 'stopped'})
+            assert runtime.c.PROMPTS.finish_now.is_set()
         for remote_run in assignments[assignment['id']]['runs']:
             if remote_run['id'] == run['id']:
                 remote_run['state'] = 'finished'
@@ -91,6 +97,9 @@ with tempfile.TemporaryDirectory(prefix='unified-ui-contract-') as tmp:
 
     def export(path, *args, **kwargs):
         exports.append((path.name, kwargs['metadata']['outcome']))
+        if robot == 'franka':
+            assert kwargs['metadata']['task_difficulty'] == 7
+            assert kwargs['metadata']['task_difficulty_scale'] == 10
         video = path / 'lerobot/videos/observation.images.head_image/chunk-000/file-000.mp4'
         video.parent.mkdir(parents=True, exist_ok=True)
         video.write_bytes(b'offline-video-path-fixture')
@@ -103,9 +112,41 @@ with tempfile.TemporaryDirectory(prefix='unified-ui-contract-') as tmp:
     runtime.start(form)
     runtime.c.RECORDER['thread'].join(15)
     assert not runtime.c.recording()
+    if scenario == 'error_restart':
+        eid = runtime.c.S.run['eval_id']
+        assert runtime.c.S.run['phase'] == 'error' and trials == ['A']
+        folder = runtime.root / eid
+        captured = folder / assignments[eid]['runs'][0]['id']
+        assert (captured / 'frames.jsonl').exists()
+        runtime.router = lambda *args: (_ for _ in ()).throw(AssertionError('No abort/confirmation job allowed'))
+        previous_calls = copy.deepcopy(calls)
+        runtime.act(eid, {'action': 'restart'})
+        assert not captured.exists()
+        assert json.loads((folder / 'manifest.json').read_text())['error_recovery']['cleanup_complete']
+        assert runtime.c.S.run['phase'] == 'idle' and runtime.c.S.run['eval_id'] is None
+        assert runtime.c.S.run['instruction'] == '' and not runtime.c.recording()
+        assert trials == ['A'] and calls == previous_calls and exports == []
+        assert runtime.store.pending() == [] and runtime.store.stats()['rows'] == []
+        assert runtime.act(eid, {'action': 'restart'})['cleanup_complete']
+        assert len(assignments) == 1 and calls == previous_calls
+        runtime.start({**form, 'instruction': 'A completely different task', 'scene': 'new scene'})
+        runtime.c.RECORDER['thread'].join(15)
+        new_id = runtime.c.S.run['eval_id']
+        assert new_id != eid and runtime.c.S.run['phase'] == 'done'
+        assert assignments[new_id]['task']['instruction'] == 'A completely different task'
+        assert assignments[new_id]['scene'] == 'new scene'
+        assert trials == ['A', 'A', 'B']
+        runtime.dispatch('shutdown', {})
+        print('PASS', robot, scenario, 'local delete -> blank idle; new task only after explicit start')
+        sys.exit(0)
     assert runtime.c.S.run['phase'] == 'done', runtime.c.S.run
     eid = runtime.c.S.run['eval_id']
     assert trials == ['A', 'B'] and exports == []
+    if scenario == 'manual_finish':
+        for run in assignments[eid]['runs']:
+            marker = json.loads((runtime.root / eid / run['id'] / 'operator-stop.json').read_text())
+            assert marker['reason'] == 'stopped'
+        assert not json.loads((runtime.root / eid / 'manifest.json').read_text()).get('recording_error')
     assert not any(route.endswith('/result') for _, route, _ in calls)
     assert runtime.store.stats()['rows'] == []
     with_exception = False
@@ -119,7 +160,7 @@ with tempfile.TemporaryDirectory(prefix='unified-ui-contract-') as tmp:
                       'feedback': 'Offline test.', 'notes': {'A': 'first', 'B': 'second'}, 'factors': {'speed': 'A1'}})
     # Simplified UI no longer sends notes/factors. Existing saved metadata must survive.
     runtime.act(eid, {'action': 'save', 'score_A': 100, 'score_B': 50, 'preference': 'A',
-                      'feedback': 'One overall comment.'})
+                      'feedback': 'One overall comment.', 'task_difficulty': 7})
     notes = json.loads((runtime.root / eid / 'review-notes.json').read_text())
     assert notes['A'] == 'first' and notes['factors']['speed'] == 'A1'
     if scenario == 'lost_response':

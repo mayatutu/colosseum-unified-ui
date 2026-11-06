@@ -39,6 +39,24 @@ def test_franka_start_only_checks_never_recovers(tmp_path):
     assert calls == ['check']
 
 
+@pytest.mark.parametrize('result, expected, detail', [
+    ((False, 'Policy unavailable'), False, 'Policy unavailable'),
+    ((True, ''), True, 'Franka Policy startup check'),
+    (False, False, 'Franka Policy startup check'),
+    (True, True, 'Franka Policy startup check'),
+])
+def test_franka_startup_preserves_installed_health_result(tmp_path, result, expected, detail):
+    host = LegacyHost(tmp_path, 'franka', 'unused', 'unused')
+    calls = []
+    host.started = host.external = True
+    host.module = SimpleNamespace(start_policy_server=lambda: calls.append('check') or result)
+    status = host.call('start_policy', {})
+    assert status['ok'] is expected
+    assert status['detail'] == detail
+    assert status['external'] is True
+    assert calls == ['check']
+
+
 def test_yam_owned_stop_disables_watchdog_and_start_reuses_existing(tmp_path):
     host = LegacyHost(tmp_path, 'yam', 'unused', 'unused')
     calls = []

@@ -152,6 +152,13 @@ def create_app(station, bridge=None):
             raise HTTPException(404)
         return Response(base64.b64decode(data), media_type='image/jpeg', headers={'Cache-Control': 'no-store'})
 
+    @app.get('/api/scene-reference/{eid}/{cam}.png')
+    def scene_reference(eid: str, cam: str):
+        path = client.call('scene_reference', {'id': eid, 'camera': cam})
+        if not path:
+            raise HTTPException(404)
+        return FileResponse(path, media_type='image/png', headers={'Cache-Control': 'no-store'})
+
     @app.get('/video/{eid}/{run_id}/{cam}')
     def video(eid: str, run_id: str, cam: str):
         path = client.call('video', {'id': eid, 'run': run_id, 'cam': cam})

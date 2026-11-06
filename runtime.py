@@ -17,6 +17,9 @@ from store import Store, PendingEvaluation
 from submission import install_api_hook, reconcile, mark_manifest
 from evaluation_lock import evaluation_lock
 from ui_diagnostics import model_name, tail, LogMirror
+from task_annotations import difficulty, save_difficulty
+import scene_reference
+import error_recovery
 
 
 class Runtime:
@@ -51,6 +54,7 @@ class Runtime:
                                   '--policy-url', c.CONFIG.policy_server_url],
                                  log_path=station.file('database').with_name('maintenance.log'))
         self.current_person = None
+        self.last_replied_prompt = None
         self.closed = threading.Event()
         self.last_frame = -1
         self.frame_data = None
@@ -98,7 +102,7 @@ class Runtime:
         if not manifest.exists():
             self.c.ev.save(manifest, {'assignment': assignment, 'outcomes': {}, 'uploaded': []})
         (folder / 'ui-origin.json').write_text(json.dumps({'version': 1, 'person': self.current_person,
-            'robot': self.station.robot}, ensure_ascii=False), encoding='utf-8')
+            'robot': self.station.robot, 'scene_reference_required': self.station.robot == 'franka'}, ensure_ascii=False), encoding='utf-8')
         self.c.S.set_run(eval_id=assignment['id'])
 
     def _install_hooks(self):
@@ -135,6 +139,14 @@ class Runtime:
             yam.YAMRobot._zero_recovery_choice = staticmethod(c.PROMPTS.recovery_choice)
 
     def startup(self):
+        for row in self.store.pending(self.station.robot):
+            try:
+                document = self.c.rv.load(row['id'])
+                if document.get('recording_error'):
+                    self.c.S.set_run(phase='error', eval_id=row['id'], side=None, step=0,
+                        instruction=document['assignment']['task']['instruction'], message=document['recording_error'])
+            except (OSError, ValueError, KeyError):
+                pass
         if self.legacy:
             try:
                 self.policy('startup')
@@ -215,6 +227,12 @@ class Runtime:
             eid = c.record_evals.record(config, resume=resume, ask=c.PROMPTS.ask)
             if eid:
                 self.store.state(eid, 'review')
+                mark_manifest(self.root, eid, recording_error=None)
+                if self.station.robot == 'franka':
+                    try:
+                        scene_reference.cleanup(self.root / eid)
+                    except (OSError, ValueError) as exc:
+                        print('Initial scene cleanup: ' + str(exc))
                 c.S.set_run(phase='done', eval_id=eid, message='Both runs recorded. Score them now.')
             else:
                 c.S.set_run(phase='error', message='Nothing was recorded. See the log below.')
@@ -222,6 +240,10 @@ class Runtime:
             eid = c.S.run.get('eval_id')
             if eid:
                 self.store.state(eid, 'interrupted')
+                try:
+                    mark_manifest(self.root, eid, recording_error=type(e).__name__ + ': ' + str(e))
+                except OSError as persist_error:
+                    print('Could not persist evaluation error: ' + str(persist_error))
             c.S.set_run(phase='error', message='Cancelled.' if isinstance(e, KeyboardInterrupt) else str(e))
         finally:
             for name, value in originals.items():
@@ -236,7 +258,16 @@ class Runtime:
         with self.lock:
             if self.c.recording():
                 raise self.c.HTTPException(409, 'An evaluation is already running')
+            for path in self.root.glob('*/manifest.json'):
+                try:
+                    recovery = json.loads(path.read_text(encoding='utf-8')).get('error_recovery')
+                except (OSError, ValueError):
+                    continue
+                if recovery and not recovery.get('cleanup_complete'):
+                    raise PendingEvaluation('Failed-round local cleanup is incomplete: ' + path.parent.name)
             resume = body.get('resume')
+            if resume and self.c.rv.load(self.c.known(resume)).get('recording_error'):
+                raise PendingEvaluation('Discard the failed round and start a new one')
             pending = self.store.pending(self.station.robot)
             if pending and pending[0]['id'] != resume:
                 raise PendingEvaluation('Submit or discard the pending A/B evaluation first: ' + pending[0]['id'])
@@ -247,6 +278,7 @@ class Runtime:
 
     def summary(self, path):
         value = self.original_summary(path)
+        value['recording_error'] = json.loads(path.read_text(encoding='utf-8')).get('recording_error')
         row = self.store.get(value['id'])
         if row:
             value.update(person=row['person'], robot=row['robot'], managed=True,
@@ -259,6 +291,10 @@ class Runtime:
 
     def detail(self, eid):
         value = self.original_detail(eid)
+        document = self.c.rv.load(eid)
+        value['task_difficulty'] = document.get('task_difficulty')
+        value['recording_error'] = document.get('recording_error')
+        value['error_recovery'] = document.get('error_recovery')
         for run in value['runs']:
             root = self.root / eid / run['id']
             run['model_name'] = model_name(root / 'policy.json')
@@ -317,6 +353,8 @@ class Runtime:
                 raise self.c.HTTPException(409, 'Still talking to the Router; wait a moment')
 
     def _act_locked(self, eid, body):
+        if body.get('action') == 'restart':
+            return self.restart_failed(eid)
         if body.get('action') == 'submit' and not str(body.get('feedback') or '').strip():
             raise self.c.HTTPException(400, 'Overall feedback is required before submitting')
         row = self.store.get(eid)
@@ -331,10 +369,49 @@ class Runtime:
         d = self.c.rv.load(eid)
         if d.get('submitted') or d.get('discarded'):
             return {'msg': 'This evaluation is closed.', 'state': 'submitted' if d.get('submitted') else 'discarded'}
+        if d.get('recording_error'):
+            if body.get('action') == 'discard':
+                return self.restart_failed(eid)
+            raise self.c.HTTPException(409, 'Failed rounds must be discarded and restarted; no score is needed')
+        if self.station.robot == 'franka' and body.get('action', 'save') in ('save', 'submit'):
+            try:
+                value = difficulty(body.get('task_difficulty', d.get('task_difficulty')),
+                                   required=body.get('action') == 'submit')
+                save_difficulty(self.root / eid, value)
+            except ValueError as exc:
+                raise self.c.HTTPException(400, str(exc))
         result = self.c.act_eval(eid, body)
         if body.get('action', 'save') == 'save':
             self.store.state(eid, 'scored' if 'result' in self.c.rv.load(eid) else 'review')
         return result
+
+    def restart_failed(self, eid):
+        c = self.c
+        if c.recording() or any(c.rv.busy(x) for x in c.rv.JOBS):
+            raise c.HTTPException(409, 'Recording or Router cleanup is still running')
+        row, document = self.store.get(eid), c.rv.load(eid)
+        if not row or row['robot'] != self.station.robot:
+            raise c.HTTPException(409, 'This evaluation is not managed by this station')
+        if row['confirmed_at'] or row['intent'] or document.get('submitted') or document.get('uploaded'):
+            raise c.HTTPException(409, 'Submitted or uploaded data cannot be discarded here')
+        recovery = document.get('error_recovery')
+        failure = document.get('recording_error')
+        if c.S.run.get('eval_id') == eid and c.S.run.get('phase') == 'error':
+            failure = failure or c.S.run.get('message') or 'Evaluation failed'
+        if not recovery and not failure:
+            raise c.HTTPException(409, 'Only a failed evaluation can use discard and restart')
+        if c.S.run.get('eval_id') not in (None, eid):
+            raise c.HTTPException(409, 'The active evaluation changed; refresh the page')
+        if not recovery:
+            mark_manifest(self.root, eid, recording_error=failure,
+                          error_recovery={'mode': 'local_restart', 'requested_at': time.time(), 'cleanup_complete': False})
+        error_recovery.cleanup(self.root, eid, self.store)
+        self.store.discard(eid)
+        c.reset_run()
+        c.S.set_run(instruction='', max_steps=c.CONFIG.max_trial_steps)
+        # The next task is entered and started explicitly by the operator.
+        # Cleanup must not request an assignment or launch a recording thread.
+        return {'state': 'idle', 'cleanup_complete': True}
 
     def provider_urls(self):
         configured = dict(self.station.data.get('provider_urls', {}))
@@ -521,7 +598,19 @@ class Runtime:
 
     def snapshot(self):
         state = self.c.snapshot()
+        if state.get('prompt'):
+            # Nanosecond identifiers exceed JavaScript's exact integer range.
+            state['prompt'] = {**state['prompt'], 'id': str(state['prompt']['id'])}
         eid = state['run'].get('eval_id')
+        state['scene_reference'] = None
+        if eid and self.station.robot == 'franka':
+            try:
+                reference = scene_reference.describe(self.root / eid)
+                if reference:
+                    state['scene_reference'] = {'evaluation_id': eid, 'cameras': list(scene_reference.CAMERAS),
+                                                'version': str(reference['captured_at_ns'])}
+            except (OSError, ValueError):
+                pass  # Confirmation validates again and reports an actionable error.
         state['models'] = {}
         if eid:
             try:
@@ -536,6 +625,43 @@ class Runtime:
             self.frame_data = base64.b64encode(self.c.jpeg(self.c.S.frame, 960, 75)).decode('ascii')
         state['frame'], state['frame_seq'] = self.frame_data, self.last_frame
         return state
+
+    def reply(self, body):
+        if self.station.robot != 'franka' or body.get('kind') == 'recovery':
+            return self.c.reply(body)
+        with self.lock:
+            c = self.c
+            with c.S.lock:
+                prompt = dict(c.S.prompt or {})
+                eid = c.S.run.get('eval_id')
+            if (not prompt or str(prompt.get('id')) != str(body.get('id')) or prompt.get('kind') != body.get('kind')
+                    or prompt['id'] == self.last_replied_prompt):
+                raise c.HTTPException(409, 'This confirmation has expired. Refresh the page.')
+            if prompt['kind'] == 'scene' and body.get('answer') is not None:
+                if body.get('answer') != '':
+                    raise c.HTTPException(400, 'Invalid scene confirmation')
+                folder = self.root / c.known(eid)
+                document = c.rv.load(eid)
+                reference = scene_reference.describe(folder)
+                if not reference:
+                    first = document['assignment']['runs'][0]['side']
+                    if prompt.get('side') == first:
+                        close = None
+                        try:
+                            read, close = self.camera_reader()
+                            scene_reference.capture(folder, read())
+                        finally:
+                            if close:
+                                close()
+                    else:
+                        origin = folder / 'ui-origin.json'
+                        if origin.exists() and json.loads(origin.read_text()).get('scene_reference_required'):
+                            raise ValueError('The initial scene reference is missing; the trial has not started')
+                else:
+                    for camera in scene_reference.CAMERAS:
+                        scene_reference.image_path(folder, camera)
+            self.last_replied_prompt = prompt['id']
+            return c.reply(body)
 
     def capture_policy_log(self):
         value = self.legacy.call('logs') if self.legacy else {}
@@ -556,6 +682,8 @@ class Runtime:
         c = self.c
         if method == 'config':
             return {**c.config_info(), 'people': self.store.people(), 'station': self.station.robot,
+                    'task_difficulty_enabled': self.station.robot == 'franka',
+                    'scene_reference_enabled': self.station.robot == 'franka',
                     'evaluator_options': self.station.evaluator_options(),
                     'feedback_generation_enabled': self.station.data.get('feedback_generation_enabled') is True,
                     'managed_providers': list(c.CONFIG.llm_providers), 'settings_mode': 'host' if self.station.robot == 'franka' else 'keys',
@@ -587,10 +715,15 @@ class Runtime:
         if method == 'preview':
             return c.preview(body['action'])
         if method == 'reply':
-            return c.reply(body)
+            return self.reply(body)
+        if method == 'scene_reference':
+            path = scene_reference.image_path(self.root / c.known(body['id']), body['camera'])
+            return str(path) if path else None
         if method == 'finish':
             return c.finish_now(body)
         if method == 'reset':
+            if body.get('expected_eid') and c.S.run.get('eval_id') not in (None, body['expected_eid']):
+                raise c.HTTPException(409, 'The active evaluation changed; refresh the page')
             return c.reset_run()
         if method == 'list':
             values = []

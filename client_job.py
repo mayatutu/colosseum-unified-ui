@@ -10,6 +10,9 @@ from station import Station
 from store import Store
 from submission import install_api_hook, mark_manifest, reconcile
 from evaluation_lock import evaluation_lock
+from contextlib import nullcontext
+from task_annotations import annotate_exports, difficulty
+import scene_reference
 
 
 def run(station, eid, action, reason=''):
@@ -24,7 +27,21 @@ def run(station, eid, action, reason=''):
         config = replace(config, evaluator=row['person'])
     root = Path(config.evaluation_dir).resolve()
     with evaluation_lock(root / eid):
-        return execute(ev, config, store, root, eid, action, reason)
+        if action == 'submit' and station.robot == 'franka':
+            document = json.loads((root / eid / 'manifest.json').read_text(encoding='utf-8'))
+            difficulty(document.get('task_difficulty'), required=True)
+            import colosseum_client.lerobot_export as exporter
+            annotation = annotate_exports(exporter)
+        else:
+            annotation = nullcontext()
+        with annotation:
+            result = execute(ev, config, store, root, eid, action, reason)
+        if station.robot == 'franka':
+            try:
+                scene_reference.cleanup(root / eid, closed=action == 'discard')
+            except (OSError, ValueError) as exc:
+                print('Initial scene cleanup: ' + str(exc))
+        return result
 
 
 def execute(ev, config, store, root, eid, action, reason):
