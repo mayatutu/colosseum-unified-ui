@@ -53,6 +53,7 @@ flowchart LR
 | `station.py`、`runtime.py`、`legacy_host.py` | 配置、原评测流程、旧维护后台适配 |
 | `store.py`、`submission.py`、`client_job.py` | 账本、提交确认、原 Client 导出和上传 |
 | `task_annotations.py`、`scene_reference.py`、`error_recovery.py` | 任务难度、临时初始摆放照片、失败轮次清理 |
+| `scene_settings.py`、`feishu_reporting.py` | 场景文字持久化、原版飞书表单提交及回执 |
 | `configs/` | 需要按现场填写的无凭据模板 |
 | `upstream/` | 已脱敏的 UI/录制/回放参考代码；哈希对应这些副本 |
 | `tests/` | 独立单元测试、依赖原 Client 的契约测试、浏览器测试 |
@@ -205,9 +206,11 @@ YAM 的模型密钥覆盖写入本机 `data/llm-settings.json`，不改原机器
 4. 查看模型名、执行侧、状态、日志、画面和步数；结束一侧后等待保存及归位，再继续。
 5. A/B 录制完成后进入回放评分。
 
-Franka 首次确认摆放时保存左、右相机各一张初始位置参考图，B 侧摆放时展示，便于复位。照片仅留在本机，不进入 LeRobot 数据集；两侧录制完成或该轮被清理后删除。抓图失败会保留确认框并显示原因。
+Franka 场景填写“沙发旁”“冰箱旁”等文字，点击“确认保存场景”后写入 `robot_config` 指向的 YAML；保留其他配置与备份，刷新后沿用。录制期间不能改写，旧标签页不能覆盖后来保存的场景。
 
-“提前结束当前模型”保留本侧录像并进入正常收尾：A 结束后继续 B，B 结束后进入评分；控制器真实报错仍进入错误流程。它不是物理急停。
+Franka 首次确认摆放时保存左、右相机各一张初始位置参考图，B 侧摆放时展示，便于复位。照片不进入 LeRobot 数据集。启用飞书时，临时图保留到飞书成功后删除；未启用时在两侧录制完成后删除；整轮清理也会删除参考图。抓图失败会保留确认框并显示原因。
+
+Franka 红色“提前结束整轮”和 Esc 会停止当前策略，等待归位及资源释放，清理本轮未提交数据后返回空白任务页；不继续 B、不评分、不自动启动旧任务。清理失败会显示错误。它不是物理急停。“任务已完成”只正常结束当前模型：A 后继续 B，B 后进入评分。YAM 保留原来的结束当前模型行为。
 
 ### 报错后重开一轮
 
@@ -220,11 +223,13 @@ Franka 首次确认摆放时保存左、右相机各一张初始位置参考图�
 ### 回放、评分和提交
 
 - 查看 A/B 模型与多路回放；支持播放、暂停、重播、调速和同步拖动，网关保留 HTTP Range。
+- 分类切换和记录选择复用已读取列表，每批显示 100 条，可点“显示更多”；进入页面或刷新时重新读取。选中记录不变时保留播放器，旧详情响应不会覆盖新选择。
 - Franka 每个任务填写一次人工难度，输入整数 **1–10**（1 最容易，10 最难），A/B 共用；不填写分母。提交前必填。
 - 难度保存在任务 manifest，并通过原 Client 导出到 **A、B 各自的 `lerobot/meta/colosseum.json`**：`task_difficulty` 为填写值，`task_difficulty_scale` 为 10。旧数据不会自动补填；导出后不能改变该值。
 - 填写两项完成度、整体偏好和一段总评。旧分侧文字及比较因子仍保留在历史数据中，精简界面不覆盖它们。
 - 保存草稿时总评可为空；提交时总评必须非空，纯空格不通过。不强制英文，不自动评分。
 - 提交后等待确认。普通回放页的放弃仍要求原因、保留录制文件且不计工作量；报错后的“重开一轮”使用上面的本地清理流程。
+- “提交到 Router”使用页面内确认框，不依赖浏览器原生弹窗；确认后显示提交中并阻止连点，接口失败显示原因并保留填写内容。
 
 ### 翻译、AI 与草稿
 
@@ -241,6 +246,12 @@ AI 总评整理默认关闭。设为 YAML 布尔值 `true` 并重启后仍需要
 单站页显示本站统计，顶部全部机器人统计按来源汇总。离线来源标记不可用，不解释为零条。姓名是自行选择的记录归属，不是身份认证。
 
 提交响应丢失时保留待确认状态，通过核对按钮或启动后的 GET 对账确认，不自动重发提交。缺少原本地回执时，以实际对账确认日期入账，不猜测远端完成日期。数据导出和上传继续遵循原 Client 配置及原任务。
+
+### 原版飞书表单
+
+Franka 可设置 `feishu_reporting_enabled: true`，配置模板默认关闭。启用前须在 `maintenance.root` 对应的旧 Web 目录配置 `config.yaml` 的 `feishu.form_url`、启用状态和 `devices`，并保证 `maintenance.python` 能运行原来的 `submit_feishu`。此仓库复用旧发送器及其授权，不包含表单地址或凭据。
+
+启用后，新任务选择原版设备编号；Router 确认评分后自动提交原表单，包含文字场景、结果和左右初始图片。工作量页显示飞书状态；成功才删除临时图片。失败可单独重提飞书，结果不确定时须先查表确认没有该条。旧记录不会自动补传，飞书结果也不会重复增加 A/B 计数。
 
 ## 9. 数据与备份
 
@@ -264,12 +275,12 @@ AI 总评整理默认关闭。设为 YAML 布尔值 `true` 并重启后仍需要
 ```bash
 python3 -m venv .venv-test
 .venv-test/bin/python -m pip install -r requirements-gui.txt pytest httpx numpy Pillow
-.venv-test/bin/python -m pytest tests/test_station_hub.py tests/test_api.py tests/test_store.py tests/test_station.py tests/test_maintenance.py tests/test_evaluation_lock.py tests/test_runtime_units.py tests/test_task_annotations.py tests/test_error_recovery.py -q
+.venv-test/bin/python -m pytest tests/test_station_hub.py tests/test_api.py tests/test_store.py tests/test_station.py tests/test_maintenance.py tests/test_evaluation_lock.py tests/test_runtime_units.py tests/test_task_annotations.py tests/test_error_recovery.py tests/test_scene_feishu.py tests/test_stop_hooks.py -q
 ```
 
 Windows 使用 `.venv-test\Scripts\python.exe`。这些选定测试使用临时数据和替身，不访问真实机器人或 Router；Linux 虚拟环境软链接测试在 Windows 跳过。
 
-本次发布同步已部署的任务难度、场景参考图、确认框竞态和失败轮次清理修复；验证覆盖定向单元测试、原 Client A/B 流程契约、Python/JavaScript 语法及隐私检查。另用临时仓库验证检查器能拦截仅留在暂存区或旧历史中的敏感信息，且不会打印敏感值。
+本次发布补齐已部署的场景保存、飞书接入、整轮停止、回放列表提速和页面内提交确认框。验证覆盖定向单元测试、原 Client A/B 流程契约、Python/JavaScript 语法及隐私检查；真实飞书发送仍依赖现场原后台配置。实机页面检查不代表执行了机器人运动或真实外部提交。
 
 全量测试包含依赖原工作区 Client、Franka 基线和独立 Python 环境的契约测试。仅克隆本仓库不能保证全量可复现，先阅读测试中的路径和跳过条件。
 
@@ -277,6 +288,7 @@ Windows 使用 `.venv-test\Scripts\python.exe`。这些选定测试使用临时�
 
 - `tests/hub_fixture.py` 为模拟站，双站回环测试由 `tests/hub_browser.cjs` 驱动。不得将模拟脚本指向现场站。
 - 浏览器测试通过 `PLAYWRIGHT_MODULE` 指定已有 Playwright 模块，默认 `playwright`；通过 `CHROME_EXECUTABLE` 指定浏览器，不设置时使用 Playwright 自己已安装的浏览器。
+- 回放和停止测试：先运行 `python tests/scene_feishu_fixture.py`，另一个终端运行 `node tests/review_stop_browser.cjs`。提交确认框测试：先运行 `python tests/submit_dialog_fixture.py`，另一个终端运行 `node tests/submit_dialog_browser.cjs`。两者仅使用回环模拟站，覆盖 1770 条记录、旧请求竞态、原生弹窗禁用、取消、连点、成功和失败显示。
 - 浏览器测试会发送测试请求并生成截图/报告，不是现场只读巡检。输出均应留在本地，发布前另行审查。
 - 本地审阅 YAML 也是占位模板，必须配置 Client 路径和本地数据目录；`test: true` 不是通用安全开关，审阅环境还必须阻断真实 Router 和维护后台。
 - 原工作区基线核对脚本依赖仓库外资料。`upstream/` 已去除环境信息，不再宣称与原始归档逐字节相同。

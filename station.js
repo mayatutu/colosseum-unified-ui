@@ -6,7 +6,7 @@ function stationURL(path){return STATION_BASE+path}
 function readDraft(key){try{return JSON.parse(sessionStorage.getItem(key)||'null')}catch(e){return null}}
 function writeDraft(key,value){try{sessionStorage.setItem(key,JSON.stringify(value))}catch(e){}}
 function bindStationFormDraft(){
- const ids=['instruction','scene','evaluator','maxsteps'],key='station-form:'+STATION_KEY,saved=readDraft(key);
+ const ids=['instruction',...(CFG.scene_persistence_enabled?[]:['scene']),'evaluator','maxsteps',...(CFG.feishu?.enabled?['feishuDevice']:[])],key='station-form:'+STATION_KEY,saved=readDraft(key);
  if(saved)for(const id of ids)if(saved[id]!==undefined)$('#'+id).value=saved[id];
  const save=()=>writeDraft(key,Object.fromEntries(ids.map(id=>[id,$('#'+id).value])));
  for(const id of ids){$('#'+id).addEventListener('input',save);$('#'+id).addEventListener('change',save)}
@@ -36,12 +36,32 @@ window.addEventListener('message',e=>{
 async function allEvaluations() {
   const items=[];
   for(let offset=0;;) {
-    const page=await api(`/api/evals?paginated=true&offset=${offset}&limit=100`);
+    const page=await api(`/api/evals?paginated=true&offset=${offset}&limit=5000`);
     items.push(...page.items);offset+=page.items.length;
     if(!page.items.length||offset>=page.total) return items;
   }
 }
+function setupSceneSaving(){
+ if(!CFG.scene_persistence_enabled)return;
+ const input=$('#scene'),row=document.createElement('div');row.className='row';row.style.marginTop='8px';
+ const button=document.createElement('button');button.type='button';button.id='sceneSave';button.className='small';button.textContent=tr('Confirm and save scene');
+ const status=document.createElement('span');status.id='sceneSaveStatus';status.setAttribute('role','status');status.className='mut';
+ row.append(button,status);input.insertAdjacentElement('afterend',row);
+ const update=()=>{const same=input.value.trim()===CFG.scene;button.disabled=same;status.textContent=tr(same?'Saved scene · used after refresh or restart':'Scene changed · confirm to save')};
+ input.addEventListener('input',update);
+ button.onclick=async()=>{const requested=input.value;button.disabled=true;status.textContent=tr('Saving scene…');
+  try{const result=await api('/api/scene',{scene:requested,expected_scene:CFG.scene});CFG.scene=result.scene;if(input.value===requested)input.value=result.scene;update()}
+  catch(e){button.disabled=false;status.textContent=tr(e.message)}
+ };
+ update();
+}
 function setupStation(c) {
+  if(c.robot!=='franka')$('#killBtn').innerHTML='■ 提前结束当前模型<small>保留已录数据 · 回位后 A 继续 B，B 进入评分 <kbd>Esc</kbd></small>';
+  if(c.feishu?.enabled){
+    const fields=document.createElement('div');fields.className='row';fields.style.gap='12px';
+    fields.innerHTML='<div style="flex:1"><label for="feishuDevice">Device number</label><select id="feishuDevice"><option value="">'+tr('Select device')+'</option>'+c.feishu.devices.map(d=>`<option value="${esc(d)}">${esc(d)}</option>`).join('')+'</select></div>';
+    $('#scene').closest('.card').querySelector('details').insertAdjacentElement('beforebegin',fields);
+  }
   $('#language').onclick=()=>{setLanguage(getLanguage()==='zh-CN'?'en':'zh-CN');if(parent!==window)parent.postMessage({type:'station-language',language:getLanguage()},location.origin)};
   $('#language').textContent=getLanguage()==='zh-CN'?'English':'中文';
   const people=[...new Set([...(c.evaluator_options||[]),...(c.people||[])])];
@@ -98,6 +118,7 @@ function bindPlayback(){
   }));
   const status=document.querySelector(`[data-playstate="${side}"]`);
   const update=()=>{
+   if(!master.isConnected)return;
    const duration=master.duration,ready=Number.isFinite(duration)&&duration>0;
    seek.disabled=!ready;seek.max=ready?duration:0;seek.value=master.currentTime||0;
    document.querySelector(`[data-time="${side}"]`).textContent=format(master.currentTime)+' / '+format(duration);
@@ -181,6 +202,22 @@ async function loadStats() {
     const stats=await api('/api/stats'+(date?'?date='+encodeURIComponent(date):''));
     $('#statsRows').innerHTML=stats.rows.map(r=>`<tr><td>${esc(r.date)}</td><td data-user-text>${esc(r.person)}</td><td>${esc(r.robot)}</td><td>${r.count}</td></tr>`).join('')||'<tr><td colspan="4">No confirmed submissions in this period.</td></tr>';
     $('#statsSummary').textContent=tr('Confirmed A/B pairs: ')+stats.rows.reduce((n,r)=>n+r.count,0);
+    let panel=$('#feishuStats');
+    if(CFG.feishu?.enabled){
+      if(!panel){panel=document.createElement('div');panel.id='feishuStats';$('#statsSummary').closest('.card').append(panel)}
+      const rows=stats.feishu_reports||[];
+      panel.innerHTML='<h3>'+tr('Original Feishu form')+'</h3><p>'+tr('Feishu confirmed: ')+rows.filter(r=>r.status==='sent').length+'</p><table class="stats-table"><thead><tr><th>'+tr('Date')+'</th><th>'+tr('Person')+'</th><th>'+tr('Evaluation')+'</th><th>'+tr('Feishu status')+'</th></tr></thead><tbody>'+rows.map(r=>
+        `<tr><td>${esc(r.date)}</td><td data-user-text>${esc(r.person)}</td><td data-user-text>${esc(r.id)}</td><td>${esc(feishuLabel(r.status))}${r.error?'<br><span>'+esc(tr(r.error))+'</span>':''}${['error','unknown'].includes(r.status)?`<br><button type="button" class="small" data-feishu-retry="${esc(r.id)}" data-unknown="${r.status==='unknown'}">${tr('Retry Feishu only')}</button>`:''}</td></tr>`).join('')+'</tbody></table>';
+      panel.querySelectorAll('[data-feishu-retry]').forEach(button=>button.onclick=async()=>{
+        const unknown=button.dataset.unknown==='true';
+        if(unknown&&!confirm('Check the original Feishu table first. Is this evaluation absent? Only continue if it has not been submitted.'))return;
+        button.disabled=true;
+        try{await api('/api/evals/'+encodeURIComponent(button.dataset.feishuRetry)+'/feishu',{checked_missing:unknown});await loadStats()}
+        catch(e){toast(e.message);button.disabled=false}
+      });
+    }
     applyLanguage();
   }catch(e){toast(e.message)}
 }
+function feishuLabel(status){return tr({queued:'Waiting for Feishu',preparing:'Preparing Feishu submission',sending:'Submitting to Feishu',sent:'Feishu submitted',error:'Feishu failed',unknown:'Feishu confirmation unknown',not_enabled:'Feishu not enabled for this evaluation'}[status]||status)}
+setInterval(()=>{if(typeof view!=='undefined'&&view==='stats'&&CFG.feishu?.enabled)loadStats()},5000);

@@ -73,6 +73,11 @@ def image_path(folder, camera):
 
 def cleanup(folder, *, closed=False):
     folder = Path(folder)
+    origin = folder / 'ui-origin.json'
+    if not closed and origin.exists() and json.loads(origin.read_text(encoding='utf-8')).get('feishu', {}).get('enabled'):
+        receipt = folder / 'ui-feishu.json'
+        if not receipt.exists() or json.loads(receipt.read_text(encoding='utf-8')).get('status') != 'sent':
+            return False
     data = describe(folder)
     if not data:
         return False

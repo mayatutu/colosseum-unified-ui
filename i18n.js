@@ -143,6 +143,30 @@ const ZH = {
  'Ending this run…':'正在结束本次运行……','Stopping the policy and returning the arms to zero…':'正在停止策略并归位……',
  'Preparing':'准备中','Loading model':'加载模型','Starting':'启动中','Running':'运行中','Stopping':'停止中','Returning to zero':'归位中','Saving':'保存中','Between runs':'两次运行之间','Done':'完成','Error':'错误'
 };
+Object.assign(ZH, {
+ 'e.g. beside the sofa or refrigerator':'例如：沙发旁、冰箱旁',
+ 'Device number':'设备编号', 'Select device':'请选择设备',
+ 'Select the original Feishu device number':'请选择设备编号',
+ 'Original Feishu form':'原版飞书表单', 'Feishu confirmed: ':'飞书提交成功：',
+ 'Evaluation':'评测', 'Feishu status':'飞书状态', 'Retry Feishu only':'重新提交飞书',
+ 'Waiting for Feishu':'等待提交飞书', 'Preparing Feishu submission':'准备提交飞书',
+ 'Submitting to Feishu':'正在提交飞书', 'Feishu submitted':'飞书提交成功', 'Feishu failed':'飞书提交失败',
+ 'Feishu confirmation unknown':'飞书结果待确认', 'Feishu not enabled for this evaluation':'此评测未启用飞书',
+ 'Feishu reporter could not start':'飞书提交程序未能启动',
+ 'Feishu submission failed before confirmation. You can retry Feishu only.':'飞书提交失败，可单独重新提交飞书。',
+ 'Feishu confirmation is unknown. Check the table before retrying.':'未收到飞书确认，请先核对表格中是否已有此条记录。',
+ 'The reporting process stopped. Check the Feishu table before retrying.':'飞书提交进程已停止，请先核对表格中的提交结果。',
+ 'Check the original Feishu table first. Is this evaluation absent? Only continue if it has not been submitted.':'请先查看原飞书表格，确认没有这条评测记录后再重新提交。是否已确认未提交？',
+ 'Submit scores and feedback to the Router, then submit to the original Feishu form with both scene photos?':'确认提交评分和评语到 Router，并自动将结果及左右场景图提交到原飞书表单？',
+ 'Confirm and save scene':'确认保存场景',
+ 'Saved scene · used after refresh or restart':'已保存，刷新或重启后仍使用此场景',
+ 'Scene changed · confirm to save':'场景已修改，请确认保存',
+ 'Saving scene…':'正在保存场景……',
+ 'Scene must contain 1 to 4000 characters':'场景需填写 1–4000 个字符',
+ 'The saved scene changed. Refresh before saving again.':'其他页面已修改场景，请刷新后再保存。',
+ 'Robot configuration changed. Refresh before saving again.':'配置已更新，请刷新后再保存。',
+ 'End the current evaluation before saving the scene':'请在当前评测结束后保存场景'
+});
 let uiLanguage=(()=>{try{return localStorage.getItem('station-language')||'zh-CN'}catch(e){return 'zh-CN'}})();
 const textSources=new WeakMap(), attributeSources=new WeakMap();
 function getLanguage(){return uiLanguage}

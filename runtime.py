@@ -20,6 +20,12 @@ from ui_diagnostics import model_name, tail, LogMirror
 from task_annotations import difficulty, save_difficulty
 import scene_reference
 import error_recovery
+import scene_settings
+import feishu_reporting
+
+
+class RoundStopped(BaseException):
+    """Exit the A/B loop only after the current trial's cleanup has completed."""
 
 
 class Runtime:
@@ -54,8 +60,13 @@ class Runtime:
                                   '--policy-url', c.CONFIG.policy_server_url],
                                  log_path=station.file('database').with_name('maintenance.log'))
         self.current_person = None
+        self.current_feishu = None
         self.last_replied_prompt = None
         self.closed = threading.Event()
+        self.round_stop = threading.Event()
+        self.round_stop_pending = False
+        self.round_stop_clean = False
+        self.round_stop_thread = None
         self.last_frame = -1
         self.frame_data = None
         self._adapt()
@@ -102,7 +113,8 @@ class Runtime:
         if not manifest.exists():
             self.c.ev.save(manifest, {'assignment': assignment, 'outcomes': {}, 'uploaded': []})
         (folder / 'ui-origin.json').write_text(json.dumps({'version': 1, 'person': self.current_person,
-            'robot': self.station.robot, 'scene_reference_required': self.station.robot == 'franka'}, ensure_ascii=False), encoding='utf-8')
+            'robot': self.station.robot, 'scene_reference_required': self.station.robot == 'franka',
+            **({'feishu': self.current_feishu} if self.current_feishu else {})}, ensure_ascii=False), encoding='utf-8')
         self.c.S.set_run(eval_id=assignment['id'])
 
     def _install_hooks(self):
@@ -121,17 +133,24 @@ class Runtime:
         trial = ev.run_trial
 
         async def run_trial(config, assignment, run, path, *args, **kwargs):
-            c.PROMPTS.finish_now.clear()
-            c.PROMPTS.stop_reason = None
+            with self.lock:
+                if self.round_stop.is_set():
+                    raise RoundStopped('Round stopped by the operator')
+                c.PROMPTS.finish_now.clear()
+                c.PROMPTS.stop_reason = None
             c.S.set_run(side=run['side'], step=0, max_steps=assignment['task'].get('max_steps', config.max_trial_steps),
                         eval_id=assignment['id'], instruction=assignment['task'].get('instruction', ''))
             try:
-                return await trial(config, assignment, run, path, *args, **kwargs)
+                result = await trial(config, assignment, run, path, *args, **kwargs)
+                if self.round_stop.is_set():
+                    raise RoundStopped('Round stopped by the operator')
+                return result
             finally:
                 if c.PROMPTS.stop_reason:
                     path.mkdir(parents=True, exist_ok=True)
                     (path / 'operator-stop.json').write_text(json.dumps({'reason': c.PROMPTS.stop_reason, 'step': c.S.run['step']}))
-                c.S.set_run(phase='between', message='Policy ' + run['side'] + ' finished.')
+                if not self.round_stop.is_set():
+                    c.S.set_run(phase='between', message='Policy ' + run['side'] + ' finished.')
         ev.run_trial = run_trial
         ev.sys, ev.select = c.PROMPTS_SYS, c.PROMPTS
         if self.station.robot == 'yam':
@@ -157,6 +176,30 @@ class Runtime:
         threading.Thread(target=self._poll, daemon=True).start()
         # Retry uncertain confirmations using GET only, never replay submissions at startup.
         threading.Thread(target=self.reconcile_pending, daemon=True).start()
+        if getattr(self.station, 'data', {}).get('feishu_reporting_enabled') is True:
+            threading.Thread(target=self.report_feishu_loop, daemon=True).start()
+
+    def report_feishu_loop(self):
+        while not self.closed.is_set():
+            try:
+                for row in self.store.confirmed():
+                    folder = self.root / row['id']
+                    if self.closed.is_set():
+                        break
+                    if not feishu_reporting.origin(folder) or feishu_reporting.status(folder)['status'] != 'queued':
+                        continue
+                    try:
+                        with (folder / 'review-feishu.log').open('a', encoding='utf-8') as log:
+                            result = subprocess.run([self.station.data['maintenance']['python'], '-B', '-u',
+                                str(Path(__file__).with_name('feishu_reporting.py')), '--station', str(self.station.path),
+                                '--folder', str(folder)], stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
+                        if result.returncode and feishu_reporting.status(folder)['status'] == 'queued':
+                            raise RuntimeError('Feishu reporter could not start')
+                    except (OSError, RuntimeError):
+                        feishu_reporting.write(folder, {'status': 'error', 'error': 'Feishu reporter could not start'})
+            except Exception as exc:
+                print('Feishu reporting: ' + str(exc))
+            self.closed.wait(5)
 
     def _poll(self):
         while not self.closed.wait(5):
@@ -244,7 +287,10 @@ class Runtime:
                     mark_manifest(self.root, eid, recording_error=type(e).__name__ + ': ' + str(e))
                 except OSError as persist_error:
                     print('Could not persist evaluation error: ' + str(persist_error))
-            c.S.set_run(phase='error', message='Cancelled.' if isinstance(e, KeyboardInterrupt) else str(e))
+            self.round_stop_clean = isinstance(e, RoundStopped)
+            c.S.set_run(phase='stopping' if self.round_stop_clean else 'error',
+                        message='正在清理本轮数据…' if self.round_stop_clean else
+                        'Cancelled.' if isinstance(e, KeyboardInterrupt) else str(e))
         finally:
             for name, value in originals.items():
                 if value is None:
@@ -256,7 +302,7 @@ class Runtime:
 
     def start(self, body):
         with self.lock:
-            if self.c.recording():
+            if self.c.recording() or self.round_stop_pending:
                 raise self.c.HTTPException(409, 'An evaluation is already running')
             for path in self.root.glob('*/manifest.json'):
                 try:
@@ -272,9 +318,47 @@ class Runtime:
             if pending and pending[0]['id'] != resume:
                 raise PendingEvaluation('Submit or discard the pending A/B evaluation first: ' + pending[0]['id'])
             row = self.store.get(resume) if resume else None
+            self.current_feishu = feishu_reporting.origin(self.root / resume) if resume else feishu_reporting.selection(self.station, body)
             self.current_person = row['person'] if row else self.store.add_person(body.get('evaluator', ''))
             self.c.PROMPTS.closing = False
+            self.round_stop.clear()
+            self.round_stop_clean = False
+            self.c.S.set_run(restarted_from=None)
             return self.c.start_eval({**body, 'evaluator': self.current_person})
+
+    def finish(self, body):
+        with self.lock:
+            c = self.c
+            if body.get('expected_eid') and body['expected_eid'] != c.S.run.get('eval_id'):
+                raise c.HTTPException(409, 'The active evaluation changed; refresh the page')
+            if self.station.robot != 'franka' or body.get('reason') != 'stopped':
+                return c.finish_now(body)
+            with c.S.lock:
+                if c.S.run['phase'] != 'running' or not c.recording():
+                    raise c.HTTPException(409, 'No policy is running')
+                eid, recorder = c.S.run['eval_id'], c.RECORDER['thread']
+                self.round_stop.set()
+                self.round_stop_pending = True
+                c.PROMPTS.stop_reason = 'stopped'
+                c.PROMPTS.finish_now.set()
+                c.S.run.update(phase='stopping', message='正在停止整轮，等待归位和资源释放后清理数据…')
+                c.S.touch()
+
+            def finish_round():
+                recorder.join()  # Never delete captures while the recorder still owns them.
+                with self.lock:
+                    try:
+                        if self.round_stop_clean:
+                            self.act(eid, {'action': 'restart'})
+                            c.S.set_run(restarted_from=eid)
+                    except Exception as exc:
+                        c.S.set_run(phase='error', eval_id=eid, message='本轮清理未完成：' + str(exc))
+                    finally:
+                        self.round_stop_pending = False
+                        c.S.touch()
+            self.round_stop_thread = threading.Thread(target=finish_round, daemon=True)
+            self.round_stop_thread.start()
+            return {'ok': True}
 
     def summary(self, path):
         value = self.original_summary(path)
@@ -295,6 +379,7 @@ class Runtime:
         value['task_difficulty'] = document.get('task_difficulty')
         value['recording_error'] = document.get('recording_error')
         value['error_recovery'] = document.get('error_recovery')
+        value['feishu'] = feishu_reporting.status(self.root / eid)
         for run in value['runs']:
             root = self.root / eid / run['id']
             run['model_name'] = model_name(root / 'policy.json')
@@ -598,6 +683,7 @@ class Runtime:
 
     def snapshot(self):
         state = self.c.snapshot()
+        state['recording'] = state['recording'] or self.round_stop_pending
         if state.get('prompt'):
             # Nanosecond identifiers exceed JavaScript's exact integer range.
             state['prompt'] = {**state['prompt'], 'id': str(state['prompt']['id'])}
@@ -681,13 +767,27 @@ class Runtime:
     def dispatch(self, method, body):
         c = self.c
         if method == 'config':
-            return {**c.config_info(), 'people': self.store.people(), 'station': self.station.robot,
+            info = c.config_info()
+            if self.station.robot == 'franka':
+                info['scene'] = scene_settings.read_scene(self.station.file('robot_config'))
+            return {**info, 'people': self.store.people(), 'station': self.station.robot,
+                    'scene_persistence_enabled': self.station.robot == 'franka',
+                    'feishu': feishu_reporting.options(self.station),
                     'task_difficulty_enabled': self.station.robot == 'franka',
                     'scene_reference_enabled': self.station.robot == 'franka',
                     'evaluator_options': self.station.evaluator_options(),
                     'feedback_generation_enabled': self.station.data.get('feedback_generation_enabled') is True,
                     'managed_providers': list(c.CONFIG.llm_providers), 'settings_mode': 'host' if self.station.robot == 'franka' else 'keys',
                     'maintenance': ['restart_policy', 'restart_docker'] if self.station.robot == 'franka' else ['restart_policy', 'restart_can']}
+        if method == 'save_scene':
+            with self.lock:
+                if self.station.robot != 'franka':
+                    raise c.HTTPException(400, 'Scene saving is not enabled for this station')
+                if c.recording():
+                    raise c.HTTPException(409, 'End the current evaluation before saving the scene')
+                value = scene_settings.save_scene(self.station.file('robot_config'), body.get('scene'), body.get('expected_scene'))
+                c.CONFIG = replace(c.CONFIG, scene=value)
+                return {'ok': True, 'scene': value}
         if method == 'snapshot':
             return self.snapshot()
         if method == 'start':
@@ -720,7 +820,7 @@ class Runtime:
             path = scene_reference.image_path(self.root / c.known(body['id']), body['camera'])
             return str(path) if path else None
         if method == 'finish':
-            return c.finish_now(body)
+            return self.finish(body)
         if method == 'reset':
             if body.get('expected_eid') and c.S.run.get('eval_id') not in (None, body['expected_eid']):
                 raise c.HTTPException(409, 'The active evaluation changed; refresh the page')
@@ -743,7 +843,20 @@ class Runtime:
             self.reconcile_pending()
             return {'ok': True, 'pending': self.store.pending(self.station.robot)}
         if method == 'stats':
-            return self.store.stats(body.get('date'))
+            reports = []
+            for row in self.store.confirmed(body.get('date')):
+                folder = self.root / row['id']
+                if feishu_reporting.origin(folder):
+                    reports.append({'id': row['id'], 'person': row['person'], 'date': row['beijing_date'],
+                                    **{k: v for k, v in feishu_reporting.status(folder).items() if k in ('status', 'error')}})
+            return {**self.store.stats(body.get('date')), 'feishu_reports': reports}
+        if method == 'retry_feishu':
+            eid = c.known(body['id'])
+            row = self.store.get(eid)
+            if not row or not row['confirmed_at'] or not feishu_reporting.origin(self.root / eid):
+                raise c.HTTPException(400, 'Only confirmed evaluations with Feishu enabled can be reported')
+            feishu_reporting.retry(self.root / eid, body.get('checked_missing') is True)
+            return {'ok': True}
         if method == 'people':
             if body.get('name'):
                 self.store.add_person(body['name'])

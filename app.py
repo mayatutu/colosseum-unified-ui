@@ -67,6 +67,14 @@ def create_app(station, bridge=None):
     def check(name: str):
         return client.call('check', {'name': name})
 
+    @app.post('/api/evals/{eid}/feishu')
+    def retry_feishu(eid: str, body: dict):
+        return client.call('retry_feishu', {'id': eid, 'checked_missing': body.get('checked_missing') is True})
+
+    @app.post('/api/scene')
+    def save_scene(body: dict):
+        return client.call('save_scene', body)
+
     @app.post('/api/preview/{action}')
     def preview(action: str):
         return client.call('preview', {'action': action})

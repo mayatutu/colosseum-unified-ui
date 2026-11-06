@@ -249,7 +249,7 @@ header .steps{width:100%;display:grid;grid-template-columns:repeat(2,1fr)}header
         <label for="instruction" style="margin-top:0">Task for the robot</label>
         <textarea id="instruction" placeholder="e.g. Pick up the red cup and place it on the plate"></textarea>
         <label for="scene">Scene / location</label>
-        <input id="scene" placeholder="e.g. nus">
+        <input id="scene" placeholder="e.g. beside the sofa or refrigerator">
         <div class="row" style="gap:12px">
           <div style="flex:1;min-width:140px"><label for="evaluator">Your name</label><select id="evaluator"><option value="">Select evaluator</option></select></div>
           <div style="width:140px"><label for="maxsteps">Max steps</label><input id="maxsteps" type="number" min="1" step="1"></div>
@@ -280,7 +280,7 @@ header .steps{width:100%;display:grid;grid-template-columns:repeat(2,1fr)}header
         <div id="runModels" data-user-text style="margin-top:12px;overflow-wrap:anywhere"></div><div class="timeline" id="timeline"></div>
         <div id="runMsg" class="banner info" style="display:none"></div>
         <div id="killBox">
-          <button class="kill" id="killBtn">■ 提前结束当前模型<small>保留已录数据 · 回位后 A 继续 B，B 进入评分 <kbd>Esc</kbd></small></button>
+          <button class="kill" id="killBtn">■ 提前结束整轮<small>停止并清理本轮 · 返回新任务填写页 <kbd>Esc</kbd></small></button>
           <button id="doneBtn" style="width:100%;margin-top:10px">✓ 任务已完成，结束当前模型</button>
           <p class="mut" style="font-size:12px;margin:10px 0 0">This is a software stop. In an emergency, press the physical stop button.</p>
         </div>
@@ -320,6 +320,11 @@ header .steps{width:100%;display:grid;grid-template-columns:repeat(2,1fr)}header
 <h2 id="discardTitle">Discard evaluation</h2><p>Close this evaluation without submitting scores. Recording files are kept.</p>
 <label for="discardReason">Reason for discarding</label><textarea id="discardReason"></textarea>
 <p id="discardError" role="alert"></p><div class="row"><button id="discardCancel">Cancel</button><button id="discardConfirm">Confirm discard</button></div>
+</div></div>
+<div class="modal" id="submitDialog" role="dialog" aria-modal="true" aria-labelledby="submitTitle"><div class="card" style="background:var(--bg)">
+<h2 id="submitTitle">Submit to Router</h2><p id="submitSummary"></p>
+<p id="submitError" role="alert" style="white-space:pre-wrap"></p>
+<div class="row"><button type="button" id="submitCancel">Cancel</button><button type="button" class="primary" id="submitConfirm">Submit to Router</button></div>
 </div></div>
 
 <div class="modal" id="modal"><div class="card">
@@ -428,15 +433,29 @@ $('#start').onclick=async()=>{
   const missing=REQUIRED.filter(k=>ST.checks[k].status!='ok');
   if(missing.length&&!confirm('Some setup checks are not green yet. Start anyway?'))return;
   const body={instruction:$('#instruction').value,scene:$('#scene').value,evaluator:$('#evaluator').value,max_steps:$('#maxsteps').value,resume:$('#resume').value};
+  if(CFG.feishu?.enabled){
+    body.feishu_device=$('#feishuDevice').value;
+    if(!body.resume&&!body.scene.trim())return toast('Scene must contain 1 to 4000 characters');
+    if(!body.resume&&!body.feishu_device)return toast('Select the original Feishu device number');
+  }
   try{localStorage.setItem('evform:'+STATION_KEY,JSON.stringify({scene:body.scene,evaluator:body.evaluator}))}catch(e){}
   try{await api('/api/eval/start',body)}catch(e){toast(e.message)}
 };
-const stopRun=reason=>api('/api/eval/finish',{reason}).catch(e=>toast(e.message));
+const stopRun=reason=>api('/api/eval/finish',{reason,expected_eid:ST?.run.eval_id}).catch(e=>toast(e.message));
 $('#killBtn').onclick=()=>stopRun('stopped');
 $('#doneBtn').onclick=()=>stopRun('completed');
 addEventListener('keydown',e=>{if(e.key=='Escape'&&ST&&ST.run.phase=='running'&&!$('#modal').classList.contains('on')){e.preventDefault();stopRun('stopped')}});
 $('#toReview').onclick=()=>{evSel=ST.run.eval_id;api('/api/eval/reset',{});show('review')};
 let recoveryBusy=false;
+function blankRoundForm(id){
+  $('#instruction').value='';$('#scene').value='';$('#resume').value='';$('#maxsteps').value=CFG.max_steps;
+  $('#scene').dispatchEvent(new Event('input'));
+  writeDraft('station-form:'+STATION_KEY,{instruction:'',scene:'',evaluator:$('#evaluator').value,maxsteps:String(CFG.max_steps)});
+  try{localStorage.setItem('evform:'+STATION_KEY,JSON.stringify({scene:'',evaluator:$('#evaluator').value}))}catch(e){}
+  if(id)clearReviewDraft(id);evSel=null;$('#evdetail').replaceChildren();$('#lv').removeAttribute('src');
+  renderRun();renderPrompt();show('record',false);
+  toast('旧轮已清理。请填写新的任务，再点击“开始评测”。');
+}
 async function restartFailed(id,button){
   if(recoveryBusy)return;recoveryBusy=true;button.disabled=true;
   const message=$('#recoveryError');message.textContent='';
@@ -448,12 +467,7 @@ async function restartFailed(id,button){
       await api('/api/eval/reset',{});
     }
     ST=await api('/api/state');
-    $('#instruction').value='';$('#scene').value='';$('#resume').value='';$('#maxsteps').value=CFG.max_steps;
-    writeDraft('station-form:'+STATION_KEY,{instruction:'',scene:'',evaluator:$('#evaluator').value,maxsteps:String(CFG.max_steps)});
-    try{localStorage.setItem('evform:'+STATION_KEY,JSON.stringify({scene:'',evaluator:$('#evaluator').value}))}catch(e){}
-    if(id)clearReviewDraft(id);evSel=null;$('#evdetail').replaceChildren();$('#lv').removeAttribute('src');
-    renderRun();renderPrompt();show('record',false);
-    toast('旧轮已清理。请填写新的任务，再点击“开始评测”。');
+    blankRoundForm(id);
   }catch(e){message.textContent=e.message;toast(e.message)}
   finally{recoveryBusy=false;button.disabled=false;button.textContent='重开一轮'}
 }
@@ -535,17 +549,42 @@ const LBL={unknown:'confirmation pending',submitting:'submitting',discarding:'di
 const FILTERS=[['all','All',()=>true],['todo','To review',e=>['review','scored','unknown','submitting'].includes(e.state)],
   ['submitted','Submitted',e=>e.state=='submitted'],['discarded','Discarded',e=>e.state=='discarded']];
 let evFilter=(()=>{try{return localStorage.getItem('evfilter:'+STATION_KEY)||'todo'}catch(e){return 'todo'}})();
+let reviewItems=[],reviewLoad=0,reviewLimit=100,detailLoad=0,displayedDetail=null;
 async function loadEvals(){
-  const all=await allEvaluations();
+  const request=++reviewLoad;
+  try{
+    const all=await allEvaluations();
+    if(request!==reviewLoad)return;
+    reviewItems=all;renderEvals(true);
+  }catch(e){if(request===reviewLoad)toast(e.message)}
+}
+function clearPlayback(){
+  displayedDetail=null;
+  const videos=[...document.querySelectorAll('#evdetail video')];
+  $('#evdetail').replaceChildren();
+  for(const video of videos){video.pause();video.removeAttribute('src');video.load()}
+}
+function selectEvaluation(id,refresh=false){
+  evSel=id;
+  $('#evlist').querySelectorAll('.evitem').forEach(b=>b.classList.toggle('on',b.dataset.id===id));
+  if(id&&(refresh||displayedDetail!==id))loadDetail(id);
+  else if(!id){detailLoad++;clearPlayback()}
+}
+function renderEvals(refresh=false){
+  const all=reviewItems;
   if(!FILTERS.some(f=>f[0]==evFilter))evFilter='all';
   $('#filters').innerHTML=FILTERS.map(([k,l,f])=>`<button data-filter="${k}" class="${k==evFilter?'on':''}">${l}<span class="n">${all.filter(f).length}</span></button>`).join('');
-  $('#filters').querySelectorAll('button').forEach(b=>b.onclick=()=>{evFilter=b.dataset.filter;try{localStorage.setItem('evfilter:'+STATION_KEY,evFilter)}catch(e){};loadEvals()});
+  $('#filters').querySelectorAll('button').forEach(b=>b.onclick=()=>{evFilter=b.dataset.filter;reviewLimit=100;try{localStorage.setItem('evfilter:'+STATION_KEY,evFilter)}catch(e){};renderEvals()});
   const evs=all.filter(FILTERS.find(f=>f[0]==evFilter)[2]);
-  if(!evSel&&evs.length)evSel=(evs.find(e=>e.state=='review')||evs[0]).id;
-  $('#evlist').innerHTML=evs.map(e=>`<button class="evitem st-${e.state} ${e.id==evSel?'on':''}" data-id="${e.id}"><div class="t" data-user-text>${esc(e.instruction)||'<i>no instruction</i>'}</div>
+  if(!evs.some(e=>e.id===evSel))evSel=(evs.find(e=>e.state=='review')||evs[0])?.id||null;
+  $('#evlist').innerHTML=evs.slice(0,reviewLimit).map(e=>`<button class="evitem st-${e.state} ${e.id==evSel?'on':''}" data-id="${e.id}"><div class="t" data-user-text>${esc(e.instruction)||'<i>no instruction</i>'}</div>
     <div class="spread"><span class="mut" style="font-size:12px">${new Date(e.time*1000).toLocaleString([], {dateStyle:'medium',timeStyle:'short'})}</span><span class="badge">${LBL[e.state]}</span></div></button>`).join('')||`<p class="mut" style="padding:10px">${!all.length?'No evaluations yet.':evFilter=='todo'?'✓ All caught up. Nothing is waiting for a score.':'Nothing here.'}</p>`;
-  $('#evlist').querySelectorAll('.evitem').forEach(b=>b.onclick=()=>{evSel=b.dataset.id;loadEvals()});
-  if(evSel)loadDetail(evSel);
+  if(evs.length>reviewLimit){
+    const more=document.createElement('button');more.id='moreEvals';more.textContent=`显示更多（${Math.min(reviewLimit,evs.length)} / ${evs.length}）`;
+    more.onclick=()=>{reviewLimit+=100;renderEvals()};$('#evlist').append(more);
+  }
+  $('#evlist').querySelectorAll('.evitem').forEach(b=>b.onclick=()=>selectEvaluation(b.dataset.id));
+  selectEvaluation(evSel,refresh);
 }
 $('#refresh').onclick=loadEvals;
 let pref='', factors={};
@@ -553,7 +592,10 @@ const FACT=[['speed','Speed'],['smoothness','Smoothness'],['safety','Safety'],['
 // A2/B2 better, A1/B1 slightly better; Safety's middle option is No eval instead of Tie
 const fopts=f=>[['A2','Better'],['A1','Slightly better'],f=='safety'?['none','No eval']:['tie','Tie'],['B1','Slightly better'],['B2','Better']];
 async function loadDetail(id){
-  const d=await api('/api/evals/'+id).catch(e=>{toast(e.message)});if(!d)return;
+  const request=++detailLoad;
+  clearPlayback();displayedDetail=id;$('#evdetail').textContent=tr('Loading…');
+  const d=await api('/api/evals/'+id).catch(e=>{if(request===detailLoad){displayedDetail=null;toast(e.message)}});
+  if(!d||request!==detailLoad||id!==evSel)return;
   if((d.recording_error||d.error_recovery)&&d.state!=='submitted'&&!d.error_recovery?.cleanup_complete){
     $('#evdetail').innerHTML=`<div class="card"><h2>本轮评测发生错误</h2><p data-user-text>${esc(d.recording_error||'本轮故障清理未完成')}</p><p>删除这轮 A/B 录像和参考图，清空旧任务并返回新任务填写页。无需填写原因或评分。</p><button id="restartFailed" ${d.busy?'disabled':''}>重开一轮</button></div>`;
     $('#restartFailed').onclick=()=>restartFailed(id,$('#restartFailed'));if(d.busy)pollBusy(id);return;
@@ -607,9 +649,29 @@ async function loadDetail(id){
     const difficulty=$('#taskDifficulty');
     if(difficulty&&(!difficulty.value||!difficulty.checkValidity())){difficulty.focus();return toast('Task difficulty must be an integer from 1 to 10')}
     if(!$('#fb').value.trim()){$('#fb').focus();return toast('Overall feedback is required before submitting')}
-    if(!confirm('Submit to the Router? Scores and feedback are submitted now. Dataset upload follows the station configuration. Continue?'))return;
-    api('/api/evals/'+id,body('submit')).then(r=>{toast(r.msg||'Submitting scores…');loadEvals();pollBusy(id)}).catch(e=>toast(e.message))};
+    openSubmit(id,body('submit'),$('#submitBtn'))};
   $('#discardBtn').onclick=()=>openDiscard(id);
+}
+let submissionBusy=false;
+function openSubmit(id,payload,source){
+  if(submissionBusy)return;
+  const modal=$('#submitDialog'),confirmButton=$('#submitConfirm'),cancel=$('#submitCancel'),error=$('#submitError');
+  $('#submitSummary').textContent=tr(CFG.feishu?.enabled?'Submit scores and feedback to the Router, then submit to the original Feishu form with both scene photos?':'Submit to the Router? Scores and feedback are submitted now. Dataset upload follows the station configuration. Continue?');
+  error.textContent='';confirmButton.disabled=false;cancel.disabled=false;confirmButton.textContent=tr('Submit to Router');
+  const close=()=>{if(submissionBusy)return;modal.classList.remove('on');if(source.isConnected)source.focus()};
+  cancel.onclick=close;modal.onkeydown=e=>{if(e.key==='Escape'){e.preventDefault();e.stopPropagation();close()}};
+  confirmButton.onclick=async()=>{
+    if(submissionBusy)return;
+    if(evSel!==id||!source.isConnected){error.textContent='评测记录已变化，请取消并重新打开提交。';return}
+    submissionBusy=true;confirmButton.disabled=true;cancel.disabled=true;source.disabled=true;
+    confirmButton.textContent=tr('Submitting scores…');error.textContent='';
+    try{
+      const result=await api('/api/evals/'+id,payload);
+      modal.classList.remove('on');toast(result.msg||'Submitting scores…');loadEvals();pollBusy(id);
+    }catch(e){error.textContent=e.message;toast(e.message)}
+    finally{submissionBusy=false;confirmButton.disabled=false;cancel.disabled=false;source.disabled=false;confirmButton.textContent=tr('Submit to Router')}
+  };
+  modal.classList.add('on');cancel.focus();
 }
 function pollBusy(id){const t=setInterval(async()=>{const d=await api('/api/evals/'+id).catch(()=>null);if(!d||!d.busy){clearInterval(t);if(view=='review'&&evSel==id)loadEvals();if(d)toast(d.state=='submitted'?'✓ Submitted':d.state=='discarded'?'Discarded':'Router step finished, see the log')}},3000)}
 
@@ -622,6 +684,10 @@ function connect(){
       if(lastBlob)setTimeout((b=>()=>URL.revokeObjectURL(b))(lastBlob),1000);lastBlob=u;
       if(img.id=='pv')$('#pvEmpty').style.display='none';return}
     const prev=ST;ST=JSON.parse(m.data);renderChecks();renderRun();renderPrompt();mood();
+    const restarted=ST.run.restarted_from,key='handled-restart:'+STATION_KEY;
+    if(restarted&&!ST.recording&&ST.run.phase==='idle'&&readDraft(key)!==restarted){
+      writeDraft(key,restarted);blankRoundForm(restarted);
+    }
     if(!ST.preview&&!ST.recording)$('#pvEmpty').style.display='';
     if(prev&&prev.recording&&!ST.recording&&view=='record')loadResumable();
   };
@@ -629,7 +695,7 @@ function connect(){
 }
 api('/api/config').then(c=>{CFG=c;setupStation(c);$('#sub').textContent=`${c.robot.toUpperCase()} · ${c.institution}`;
   let saved={};try{saved=JSON.parse(localStorage.getItem('evform:'+STATION_KEY)||'{}')}catch(e){}
-  $('#scene').value=saved.scene||c.scene||'';$('#evaluator').value=saved.evaluator||c.evaluator||'';$('#maxsteps').value=c.max_steps;bindStationFormDraft();connect();show(['setup','record','review','stats'].includes(location.hash.slice(1))?location.hash.slice(1):'setup');});
+  $('#scene').value=c.scene_persistence_enabled?(c.scene||''):(saved.scene||c.scene||'');$('#evaluator').value=saved.evaluator||c.evaluator||'';$('#maxsteps').value=c.max_steps;bindStationFormDraft();setupSceneSaving();connect();show(['setup','record','review','stats'].includes(location.hash.slice(1))?location.hash.slice(1):'setup');});
 </script>
 </body>
 </html>

@@ -128,6 +128,12 @@ class Store:
         with self.connect() as db:
             db.execute("UPDATE evaluations SET discard_reason=?,state='discarding' WHERE id=? AND closed=0", (reason, eid))
 
+    def confirmed(self, date=None):
+        with self.connect() as db:
+            return [dict(row) for row in db.execute(
+                'SELECT * FROM evaluations WHERE confirmed_at IS NOT NULL' +
+                (' AND beijing_date=?' if date else '') + ' ORDER BY confirmed_at DESC', (date,) if date else ())]
+
     def stats(self, date=None):
         with self.connect() as db:
             rows = db.execute('SELECT beijing_date AS date,person,robot,COUNT(*) AS count FROM evaluations '

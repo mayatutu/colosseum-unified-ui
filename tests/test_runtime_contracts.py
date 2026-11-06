@@ -12,3 +12,8 @@ def test_actual_client_loop_contracts(robot, scenario):
                             cwd=ROOT, capture_output=True, text=True, encoding='utf-8', timeout=40)
     assert result.returncode == 0, result.stdout + result.stderr
     assert 'PASS ' + robot + ' ' + scenario in result.stderr + result.stdout
+
+
+@pytest.mark.parametrize('scenario', ['early_stop_a', 'early_stop_b', 'early_stop_cleanup_error'])
+def test_franka_whole_round_stop(scenario):
+    test_actual_client_loop_contracts('franka', scenario)

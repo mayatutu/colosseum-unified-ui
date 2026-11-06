@@ -14,7 +14,7 @@ from station import Station
 from store import PendingEvaluation
 
 robot, scenario = sys.argv[1:3]
-workspace = ROOT.parents[1]
+workspace = next(p for p in ROOT.parents if (p / 'Official' / 'colosseum-client-main').exists())
 client = (workspace / 'deployment/client-reset-timing-20261027/candidate' if robot == 'franka'
           else workspace / 'Official/colosseum-client-main')
 sys.path.insert(0, str(client / 'src'))
@@ -85,10 +85,18 @@ with tempfile.TemporaryDirectory(prefix='unified-ui-contract-') as tmp:
             'test': True, 'action_space': 'joint_position', 'execution_enabled': False}))
         if scenario == 'error_restart' and len(assignments) == 1:
             raise RuntimeError('Injected controller return-home timeout')
-        if scenario == 'manual_finish':
+        if scenario == 'manual_finish' or scenario.startswith('early_stop'):
             runtime.c.S.set_run(phase='running')
-            runtime.c.finish_now({'reason': 'stopped'})
+            stopped = scenario.startswith('early_stop') and len(assignments) == 1 and run['side'] == ('B' if scenario.endswith('_b') else 'A')
+            runtime.dispatch('finish', {'reason': 'stopped' if stopped else 'completed', 'expected_eid': assignment['id']})
             assert runtime.c.PROMPTS.finish_now.is_set()
+            if stopped:
+                assert runtime.round_stop_pending
+                assert (path / 'frames.jsonl').exists(), 'Cleanup ran before trial release'
+                assert not json.loads((path.parent / 'manifest.json').read_text()).get('discarded')
+                await asyncio.sleep(.05)
+                if scenario == 'early_stop_cleanup_error':
+                    raise RuntimeError('Injected robot release failure')
         for remote_run in assignments[assignment['id']]['runs']:
             if remote_run['id'] == run['id']:
                 remote_run['state'] = 'finished'
@@ -112,6 +120,34 @@ with tempfile.TemporaryDirectory(prefix='unified-ui-contract-') as tmp:
     runtime.start(form)
     runtime.c.RECORDER['thread'].join(15)
     assert not runtime.c.recording()
+    if scenario.startswith('early_stop'):
+        runtime.round_stop_thread.join(10)
+        assert not runtime.round_stop_thread.is_alive()
+        eid = next(iter(assignments))
+        folder = runtime.root / eid
+        document = json.loads((folder / 'manifest.json').read_text())
+        assert trials == (['A', 'B'] if scenario.endswith('_b') else ['A'])
+        assert not exports and not any(p.endswith(('/result', '/abort')) for _, p, _ in calls)
+        if scenario == 'early_stop_cleanup_error':
+            assert runtime.c.S.run['phase'] == 'error' and not document.get('discarded')
+            assert (folder / assignments[eid]['runs'][0]['id'] / 'frames.jsonl').exists()
+            assert not runtime.round_stop_pending
+            runtime.dispatch('shutdown', {})
+            print('PASS', robot, scenario, 'real cleanup error remains visible; no false new round')
+            sys.exit(0)
+        assert document['discarded'] and document['error_recovery']['cleanup_complete']
+        assert not any((folder / r['id']).exists() for r in assignments[eid]['runs'])
+        assert runtime.c.S.run['phase'] == 'idle' and runtime.c.S.run['eval_id'] is None
+        assert runtime.c.S.run['restarted_from'] == eid and runtime.c.S.run['instruction'] == ''
+        assert runtime.store.pending() == [] and runtime.store.stats()['rows'] == []
+        assert len(assignments) == 1
+        runtime.start({**form, 'instruction': 'Different new task'})
+        runtime.c.RECORDER['thread'].join(15)
+        assert runtime.c.S.run['phase'] == 'done'
+        assert len(assignments) == 2 and not runtime.c.S.run.get('restarted_from')
+        runtime.dispatch('shutdown', {})
+        print('PASS', robot, scenario, 'whole-round stop waits for release, deletes locally, requires explicit new start')
+        sys.exit(0)
     if scenario == 'error_restart':
         eid = runtime.c.S.run['eval_id']
         assert runtime.c.S.run['phase'] == 'error' and trials == ['A']
@@ -145,7 +181,7 @@ with tempfile.TemporaryDirectory(prefix='unified-ui-contract-') as tmp:
     if scenario == 'manual_finish':
         for run in assignments[eid]['runs']:
             marker = json.loads((runtime.root / eid / run['id'] / 'operator-stop.json').read_text())
-            assert marker['reason'] == 'stopped'
+            assert marker['reason'] == 'completed'
         assert not json.loads((runtime.root / eid / 'manifest.json').read_text()).get('recording_error')
     assert not any(route.endswith('/result') for _, route, _ in calls)
     assert runtime.store.stats()['rows'] == []

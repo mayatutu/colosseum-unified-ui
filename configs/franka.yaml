@@ -7,6 +7,8 @@ robot_config: /path/to/franka-workspace/private/robot-minipc.yaml
 database: ../data/franka.sqlite3
 people: []
 feedback_generation_enabled: false
+# Enable only after the original Web UI's Feishu form and device list are configured.
+feishu_reporting_enabled: false
 robot_rpc: tcp://robot-controller.example.invalid:4242
 maintenance:
   root: /path/to/franka-workspace/colosseum-eval-web
