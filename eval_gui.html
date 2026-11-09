@@ -213,6 +213,28 @@ header .steps{width:100%;display:grid;grid-template-columns:repeat(2,1fr)}header
 .embedded .modal .card,.embedded #modal .card{max-height:calc(var(--hub-visible-height,100vh) - 40px);overflow:auto}
 .embedded .toast{bottom:auto;top:calc(var(--hub-visible-top,0px) + var(--hub-visible-height,100vh) - 24px);transform:translate(-50%,calc(-100% + 10px));transition:opacity .25s,transform .25s}
 .embedded .toast.on{transform:translate(-50%,-100%)}
+
+/* One policy at a time: all camera views and playback controls fit together. */
+.review-player-tabs{display:flex;gap:8px;margin:0 0 10px}
+.review-player-tabs button{flex:1;font-weight:700}
+.review-player-tabs button[aria-selected=true]{background:var(--sc);color:white;border-color:transparent}
+.review-player-tabs [data-review-side=A]{--sc:var(--A)}
+.review-player-tabs [data-review-side=B]{--sc:var(--B)}
+.review-player .side[hidden]{display:none}
+.review-cameras{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr);grid-template-rows:repeat(2,minmax(0,1fr));gap:8px;height:360px;margin-top:12px}
+.review-camera{position:relative;min-width:0;min-height:0;background:#000;border-radius:10px;overflow:hidden}
+.review-camera.main{grid-row:1/3}
+.review-camera video{width:100%;height:100%;aspect-ratio:auto;object-fit:contain;display:block;border-radius:0}
+.review-camera .camera-name{position:absolute;left:8px;bottom:6px;padding:2px 8px;background:#000a;color:white;border-radius:6px;font-size:13px;pointer-events:none}
+.review-cameras[data-camera-count="1"]{grid-template-columns:1fr;grid-template-rows:1fr}
+.review-cameras[data-camera-count="1"] .main{grid-area:1/1}
+.review-cameras[data-camera-count="2"]{grid-template-columns:1fr 1fr;grid-template-rows:1fr}
+.review-cameras[data-camera-count="2"] .main{grid-area:auto}
+@media(max-width:700px){
+ .review-cameras{grid-template-columns:1fr 1fr;grid-template-rows:2fr 1fr}
+ .review-camera.main{grid-column:1/3;grid-row:1}
+ .review-player .card{padding:12px}
+}
 </style>
 </head>
 <body>
@@ -348,7 +370,7 @@ header .steps{width:100%;display:grid;grid-template-columns:repeat(2,1fr)}header
 <div class="toast" id="toast"></div>
 
 <script src="/i18n.js"></script>
-<script src="/station.js"></script>
+<script src="/station.js?v=d6833ba6117012ac"></script>
 <script>
 const $=s=>document.querySelector(s), esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let ST=null, CFG={}, view='setup', evSel=null, lastPromptId=null;
@@ -610,13 +632,13 @@ async function loadDetail(id){
   const names={head_image:'Top',left_image:'Left wrist',right_image:'Right wrist'};
   const stopNote=s=>!s?'':s.reason=='stopped'?`<div class="banner bad" style="margin:12px 0 0">■ Stopped by the evaluator at step ${s.step}. Recorded up to that step.</div>`
     :`<div class="banner info" style="margin:12px 0 0">✓ Ended by the evaluator as done at step ${s.step}.</div>`;
-  const side=r=>{const v=c=>`<video data-side="${r.side}" src="${STATION_BASE}/video/${id}/${r.id}/${c}" muted preload="metadata" playsinline ${c==='head_image'?'class="vmain"':''}></video>`;
-    return `<div class="card side ${r.side}"><div class="spread"><div><span class="chip ${r.side}" style="font-size:13px">Policy ${r.side}</span><div data-user-text style="overflow-wrap:anywhere">${esc(r.model_name||tr("Model not available"))}</div></div>
+  const side=r=>{const cameras=[...(r.cams.includes('head_image')?['head_image']:[]),...r.cams.filter(c=>c!=='head_image')];const v=c=>`<video data-side="${r.side}" src="${STATION_BASE}/video/${id}/${r.id}/${c}" muted preload="metadata" playsinline ${c==='head_image'?'class="vmain"':''}></video>`;
+    return `<div class="card side ${r.side}" data-review-panel="${r.side}" id="review-panel-${r.side}" role="tabpanel" aria-labelledby="review-tab-${r.side}"><div class="spread"><div><span class="chip ${r.side}" style="font-size:13px">Policy ${r.side}</span><div data-user-text style="overflow-wrap:anywhere">${esc(r.model_name||tr("Model not available"))}</div></div>
     <div class="row" style="gap:6px"><button class="small" data-play="${r.side}">▶ Play</button><button class="small" data-pause="${r.side}">❚❚</button><button class="small" data-restart="${r.side}">⟲</button>
     <select data-rate="${r.side}" style="width:auto;padding:5px 8px"><option>0.5</option><option selected>1</option><option>2</option><option>4</option></select></div></div>
     ${r.recorded?`<div class="playback" data-playback="${r.side}" style="margin-top:12px"><input type="range" data-seek="${r.side}" min="0" max="0" value="0" step="0.01" disabled aria-label="Playback position"><div class="spread"><span data-time="${r.side}">0:00 / --:--</span><span data-playstate="${r.side}" role="status">Loading video</span></div></div>`:''}
     ${stopNote(r.stop)}
-    <div style="margin-top:12px">${r.recorded?(r.cams.includes('head_image')?v('head_image'):'')+`<div class="vsmall">${r.cams.filter(c=>c!='head_image').map(c=>`<div>${v(c)}<div class="mut" style="font-size:12px">${names[c]}</div></div>`).join('')}</div>`:'<p class="mut">Not recorded.</p>'}</div>
+    ${r.recorded?`<div class="review-cameras" data-camera-count="${cameras.length}">${cameras.map((c,index)=>`<div class="review-camera ${index===0?'main':''}">${v(c)}<span class="camera-name">${names[c]||esc(c)}</span></div>`).join('')}</div>`:'<p class="mut">Not recorded.</p>'}
     <label>How much of the task did ${r.side} complete?</label>
     <div class="score"><input type="range" min="0" max="100" step="5" id="rg-${r.side}" value="${r.score??0}" ${dis}><input class="num" type="number" min="0" max="100" id="sc-${r.side}" value="${r.score??''}" placeholder="–" ${dis}></div>
     <div class="mut" style="font-size:12px;display:flex;justify-content:space-between"><span>0 · nothing</span><span>50 · halfway</span><span>100 · fully done</span></div></div>`};
@@ -625,7 +647,7 @@ async function loadDetail(id){
   $('#evdetail').innerHTML=`<div class="card" style="margin-bottom:16px"><div class="spread"><div class="eyebrow">Task</div><span class="badge st-${d.state}">${LBL[d.state]}</span></div>
     <div style="font:500 24px/1.25 var(--serif);margin-top:4px" data-user-text>${esc(d.instruction)}</div><div class="mut"><span>Scene:</span> <span data-user-text>${esc(d.scene)||'–'}</span> · <span style="font-family:ui-monospace,monospace;font-size:12px">${id}</span></div>
     ${CFG.task_difficulty_enabled?`<label for="taskDifficulty">Task difficulty (1–10)</label><input id="taskDifficulty" type="number" min="1" max="10" step="1" inputmode="numeric" aria-required="true" style="max-width:160px" value="${esc(d.task_difficulty??'')}" ${dis}><p class="mut">1 is easiest; 10 is hardest. Enter once for this task; shared by A and B.</p>`:''}</div>
-    ${banner}<div class="ab">${d.runs.map(side).join('')}</div>
+    ${banner}<div class="review-player" id="reviewPlayer"><div class="review-player-tabs" role="tablist" aria-label="Policy playback">${d.runs.map(r=>`<button type="button" role="tab" id="review-tab-${r.side}" aria-controls="review-panel-${r.side}" data-review-side="${r.side}">Policy ${r.side}</button>`).join('')}</div><div class="ab">${d.runs.map(side).join('')}</div></div>
     <div class="card" style="margin-top:16px"><label style="margin-top:0">Which policy did better?</label>
     <div class="seg">${[['A','A was better'],['tie','About the same'],['B','B was better']].map(([v,l])=>`<button data-pref="${v}" class="${pref==v?'on':''}" ${dis}>${l}</button>`).join('')}</div>
     <div class="gen"><label>Overall feedback <span style="text-transform:none;font-weight:400">· Required</span></label>
@@ -636,6 +658,7 @@ async function loadDetail(id){
       <div class="row"><button id="saveBtn">Save draft</button><button class="primary big" id="submitBtn">Submit to Router</button></div></div>`}
     ${d.log?`<details class="log"><summary>Router log</summary><pre>${esc(d.log)}</pre></details>`:''}</div>`;
   bindPlayback();
+  bindReviewLayout(id);
   for(const r of d.runs){const rg=$('#rg-'+r.side),sc=$('#sc-'+r.side);if(!rg)continue;rg.oninput=()=>sc.value=rg.value;sc.oninput=()=>rg.value=sc.value}
   document.querySelectorAll('[data-pref]').forEach(b=>b.onclick=()=>{pref=b.dataset.pref;document.querySelectorAll('[data-pref]').forEach(x=>x.classList.toggle('on',x==b))});
   const body=action=>({action,preference:pref,feedback:$('#fb').value,

@@ -24,7 +24,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs');
   await frame.locator('#submitBtn').waitFor();
   await frame.locator('#taskDifficulty').fill('');await frame.locator('#submitBtn').click();
   assert.equal(await frame.locator('#submitDialog').isVisible(),false);assert.equal(posts.length,0);
-  await frame.locator('#sc-A').fill('90');await frame.locator('#sc-B').fill('50');
+  await frame.locator('[data-review-side="A"]').click();await frame.locator('#sc-A').fill('90');await frame.locator('[data-review-side="B"]').click();await frame.locator('#sc-B').fill('50');
   await frame.locator('[data-pref="A"]').click();await frame.locator('#taskDifficulty').fill('5');await frame.locator('#fb').fill('Test draft; never sent to Router.');
   await frame.locator('#submitBtn').click();assert.equal(await frame.locator('#submitDialog').isVisible(),true);
   assert.equal(await frame.evaluate(()=>window.nativeDialogCalls),0);assert.equal(posts.length,0);

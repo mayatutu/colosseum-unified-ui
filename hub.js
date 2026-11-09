@@ -12,7 +12,7 @@ function syncStationViewport(){
  if(!frame||frame.hidden)return;
  const rect=frame.getBoundingClientRect();
  const height=Math.min(innerHeight,rect.bottom)-Math.max(0,rect.top);
- if(height>0)frame.contentWindow.postMessage({type:'hub-viewport',top:Math.max(0,-rect.top),height},location.origin);
+ if(height>0)frame.contentWindow.postMessage({type:'hub-viewport',top:Math.max(0,-rect.top),height,viewportHeight:innerHeight},location.origin);
 }
 function scheduleStationViewport(){if(!viewportScheduled){viewportScheduled=true;requestAnimationFrame(syncStationViewport)}}
 addEventListener('scroll',scheduleStationViewport,{passive:true});

@@ -51,7 +51,7 @@ const path=require('path'),fs=require('fs'),assert=require('assert');
  });
  await page.setViewportSize({width:1440,height:1100});
  await page.locator('[data-v="review"]').click();
- await page.locator('#sc-A').fill('100');await page.locator('#sc-B').fill('50');
+ await page.locator('[data-review-side="A"]').click();await page.locator('#sc-A').fill('100');await page.locator('[data-review-side="B"]').click();await page.locator('#sc-B').fill('50');
  await page.locator('#fb').fill('总评内容 Setup 不应被翻译');
  await page.locator('[data-pref="A"]').click();
  await page.locator('#language').click();

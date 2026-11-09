@@ -246,7 +246,50 @@ if(parent!==window){
    document.documentElement.classList.add('embedded');
    document.documentElement.style.setProperty('--hub-visible-top',top+'px');
    document.documentElement.style.setProperty('--hub-visible-height',height+'px');
+   if(Number.isFinite(event.data.viewportHeight)&&event.data.viewportHeight>0)document.documentElement.style.setProperty('--hub-window-height',event.data.viewportHeight+'px');
   }
  });
  scheduleHeight();
+}
+
+let reviewLayoutCleanup=()=>{};
+function bindReviewLayout(id){
+ reviewLayoutCleanup();
+ const player=document.querySelector('#reviewPlayer');if(!player)return;
+ const panels=[...player.querySelectorAll('[data-review-panel]')],tabs=[...player.querySelectorAll('[data-review-side]')];
+ const key='review-camera-side:'+STATION_KEY+':'+id;
+ let scheduled=0;
+ const fit=()=>{
+  scheduled=0;if(!player.isConnected||!player.offsetWidth)return;
+  const panel=panels.find(p=>!p.hidden),cameras=panel?.querySelector('.review-cameras');if(!cameras)return;
+  const style=getComputedStyle(document.documentElement);
+  const viewport=parseFloat(style.getPropertyValue('--hub-window-height'))||parseFloat(style.getPropertyValue('--hub-visible-height'))||innerHeight;
+  const overhead=player.getBoundingClientRect().height-cameras.getBoundingClientRect().height;
+  const count=Number(cameras.dataset.cameraCount),width=cameras.clientWidth;
+  const natural=count===1?width*.75:count===2?width*.375:matchMedia('(max-width:700px)').matches?width*1.125+8:width/2;
+  const height=Math.floor(Math.max(100,Math.min(620,natural,viewport-overhead-24)))+'px';
+  if(cameras.style.height!==height)cameras.style.height=height;
+ };
+ const schedule=()=>{if(!scheduled)scheduled=requestAnimationFrame(fit)};
+ const select=(side,scroll=false)=>{
+  if(typeof pauseReviewPlayback==='function')pauseReviewPlayback();
+  else player.querySelectorAll('video').forEach(video=>video.pause());
+  for(const panel of panels)panel.hidden=panel.dataset.reviewPanel!==side;
+  for(const tab of tabs){const active=tab.dataset.reviewSide===side;tab.setAttribute('aria-selected',String(active));tab.tabIndex=active?0:-1}
+  try{sessionStorage.setItem(key,side)}catch(e){}
+  fit();if(scroll)requestAnimationFrame(()=>player.scrollIntoView({block:'start'}));
+ };
+ for(const tab of tabs)tab.onclick=()=>select(tab.dataset.reviewSide,true);
+ player.querySelector('[role=tablist]').onkeydown=event=>{
+  if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;
+  event.preventDefault();const current=tabs.findIndex(t=>t.getAttribute('aria-selected')==='true');
+  const index=event.key==='Home'?0:event.key==='End'?tabs.length-1:(current+(event.key==='ArrowRight'?1:-1)+tabs.length)%tabs.length;
+  select(tabs[index].dataset.reviewSide,true);tabs[index].focus();
+ };
+ const observer=new ResizeObserver(schedule);observer.observe(player);
+ const viewportChanged=event=>{if(event.origin===location.origin&&event.source===parent&&event.data?.type==='hub-viewport')schedule()};
+ addEventListener('resize',schedule);addEventListener('message',viewportChanged);
+ reviewLayoutCleanup=()=>{observer.disconnect();cancelAnimationFrame(scheduled);removeEventListener('resize',schedule);removeEventListener('message',viewportChanged)};
+ let selected;try{selected=sessionStorage.getItem(key)}catch(e){}
+ select(tabs.some(t=>t.dataset.reviewSide===selected)?selected:tabs[0]?.dataset.reviewSide);
 }
