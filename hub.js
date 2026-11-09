@@ -3,6 +3,21 @@ const H=s=>document.querySelector(s),hx=s=>String(s??'').replace(/[&<>"']/g,c=>(
 const hubAPI=async(path,body)=>{const r=await fetch(path,body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const j=await r.json();if(!r.ok)throw Error(j.detail||r.statusText);return j};
 let stations=[],selected='',editing=null,refreshing=false;
 const stationFrames=new Map();
+
+// Position child dialogs/toasts in the visible part of a full-height frame.
+let viewportScheduled=false;
+function syncStationViewport(){
+ viewportScheduled=false;
+ const frame=stationFrames.get(selected);
+ if(!frame||frame.hidden)return;
+ const rect=frame.getBoundingClientRect();
+ const height=Math.min(innerHeight,rect.bottom)-Math.max(0,rect.top);
+ if(height>0)frame.contentWindow.postMessage({type:'hub-viewport',top:Math.max(0,-rect.top),height},location.origin);
+}
+function scheduleStationViewport(){if(!viewportScheduled){viewportScheduled=true;requestAnimationFrame(syncStationViewport)}}
+addEventListener('scroll',scheduleStationViewport,{passive:true});
+addEventListener('resize',scheduleStationViewport);
+
 try{selected=new URLSearchParams(location.search).get('station')||sessionStorage.getItem('selected-workstation')||''}catch(e){}
 function phaseLabel(s){return !s.online?'Offline':s.prompt?'Waiting for you':s.recording?'Running':s.pending?'To review':'Online'}
 function renderStations(){
@@ -24,7 +39,8 @@ function selectStation(id){
   frame.addEventListener('load',()=>frame.contentWindow.postMessage({type:'hub-language',language:getLanguage()},location.origin));
   stationFrames.set(id,frame);H('#frames').append(frame);
  }
- for(const [sid,frame] of stationFrames){frame.hidden=sid!==id;if(frame.hidden)frame.contentWindow.postMessage({type:'hub-hidden'},location.origin)}
+ for(const [sid,frame] of stationFrames){frame.hidden=sid!==id;frame.contentWindow.postMessage({type:frame.hidden?'hub-hidden':'hub-visible'},location.origin)}
+ scheduleStationViewport();
  H('#offlinePanel').hidden=stationFrames.has(id);H('#offlineName').textContent=station.name;
  H('#hubError').textContent=station.online?'':tr(station.error||'Workstation unavailable or not yet running the compatible UI');
  renderStations();
@@ -75,6 +91,12 @@ H('#allStatsClose').onclick=()=>H('#allStatsDialog').hidden=true;
 H('#hubStatsRefresh').onclick=loadHubStats;H('#hubStatsDate').onchange=loadHubStats;
 window.addEventListener('message',event=>{
  if(event.origin!==location.origin||![...stationFrames.values()].some(f=>f.contentWindow===event.source))return;
+ if(event.data?.type==='station-height'&&Number.isFinite(event.data.height)&&event.data.height>0){
+  const frame=[...stationFrames.values()].find(f=>f.contentWindow===event.source);
+  const height=Math.max(500,Math.ceil(event.data.height))+'px';
+  if(frame.style.height!==height)frame.style.height=height;
+  scheduleStationViewport();
+ }
  if(event.data?.type==='station-language'){
   setLanguage(event.data.language);renderStations();
   for(const frame of stationFrames.values())if(frame.contentWindow!==event.source)frame.contentWindow.postMessage({type:'hub-language',language:getLanguage()},location.origin);

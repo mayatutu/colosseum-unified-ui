@@ -221,3 +221,32 @@ async function loadStats() {
 }
 function feishuLabel(status){return tr({queued:'Waiting for Feishu',preparing:'Preparing Feishu submission',sending:'Submitting to Feishu',sent:'Feishu submitted',error:'Feishu failed',unknown:'Feishu confirmation unknown',not_enabled:'Feishu not enabled for this evaluation'}[status]||status)}
 setInterval(()=>{if(typeof view!=='undefined'&&view==='stats'&&CFG.feishu?.enabled)loadStats()},5000);
+
+// Grow the embedded page so only the outer document scrolls. Keep station
+// contexts alive; resizing never starts/stops preview, recording or playback.
+if(parent!==window){
+ let scheduled=false,lastHeight=0;
+ const publishHeight=()=>{
+  scheduled=false;
+  const main=document.querySelector('main');
+  if(!main?.offsetWidth)return;
+  const height=Math.max(500,Math.ceil(main.getBoundingClientRect().bottom+scrollY));
+  if(height!==lastHeight){lastHeight=height;parent.postMessage({type:'station-height',height},location.origin)}
+ };
+ const scheduleHeight=()=>{if(!scheduled){scheduled=true;requestAnimationFrame(publishHeight)}};
+ const observer=new ResizeObserver(scheduleHeight);
+ for(const element of document.querySelectorAll('header,main'))observer.observe(element);
+ addEventListener('resize',scheduleHeight);
+ addEventListener('message',event=>{
+  if(event.origin!==location.origin||event.source!==parent)return;
+  if(event.data?.type==='hub-visible'){lastHeight=0;scheduleHeight()}
+  if(event.data?.type==='hub-viewport'){
+   const {top,height}=event.data;
+   if(!Number.isFinite(top)||top<0||!Number.isFinite(height)||height<=0)return;
+   document.documentElement.classList.add('embedded');
+   document.documentElement.style.setProperty('--hub-visible-top',top+'px');
+   document.documentElement.style.setProperty('--hub-visible-height',height+'px');
+  }
+ });
+ scheduleHeight();
+}

@@ -60,7 +60,7 @@ textarea{resize:vertical;min-height:90px}
 label{display:block;font-weight:600;font-size:12px;margin:14px 0 6px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em}
 .mut{color:var(--mut)}
 .eyebrow{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--acc)}
-header{position:sticky;top:0;z-index:5;border-bottom:1px solid var(--line);background:color-mix(in srgb,var(--bg) 82%,transparent)}
+header{border-bottom:1px solid var(--line);background:color-mix(in srgb,var(--bg) 82%,transparent)}
 .bar{max-width:1320px;margin:0 auto;padding:12px 20px;display:flex;align-items:center;gap:18px;flex-wrap:wrap}
 .brand{display:flex;align-items:center;gap:12px}
 .brand .logo{width:38px;height:38px;border-radius:12px 12px 6px 6px;background:linear-gradient(160deg,var(--acc),#e7a35a);display:grid;place-items:center;color:#fff;font:600 19px var(--serif);box-shadow:0 4px 14px color-mix(in srgb,var(--acc) 40%,transparent)}
@@ -149,9 +149,9 @@ pre{background:var(--glass2);border:1px solid var(--line);border-radius:12px;pad
 @media(max-width:600px){.scene-reference-images{grid-template-columns:1fr}}
 .modal h2{font:500 26px var(--serif);margin-bottom:8px}
 .modal .acts{display:flex;gap:10px;justify-content:flex-end;margin-top:22px;flex-wrap:wrap}
-.revgrid{display:grid;grid-template-columns:310px 1fr;gap:20px;align-items:start}
+.revgrid{display:grid;grid-template-columns:minmax(0,1fr);gap:20px;align-items:start}
 @media(max-width:960px){.revgrid{grid-template-columns:1fr}}
-.evlist{display:grid;gap:6px;max-height:76vh;overflow:auto;padding:8px}
+.evlist{display:grid;gap:6px;max-height:280px;overflow:auto;padding:8px}
 .evitem{text-align:left;padding:10px 12px 10px 14px;border-radius:12px;border:1px solid transparent;background:transparent;display:block;width:100%;position:relative;overflow:hidden}
 .evitem::before{content:"";position:absolute;left:0;top:8px;bottom:8px;width:4px;border-radius:4px;background:var(--st,var(--line))}
 .evitem.on{background:var(--acc2);border-color:var(--acc)}
@@ -163,12 +163,12 @@ pre{background:var(--glass2);border:1px solid var(--line);border-radius:12px;pad
 .filters button.on{background:var(--acc);color:#fff;border-color:transparent}
 .filters .n{font-size:11px;font-weight:700;min-width:18px;padding:0 5px;border-radius:10px;background:var(--line);text-align:center}
 .filters button.on .n{background:rgba(255,255,255,.25)}
-.ab{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.ab{display:grid;grid-template-columns:minmax(0,1fr);gap:16px}
 @media(max-width:1100px){.ab{grid-template-columns:1fr}}
 .side{border-top:4px solid var(--sc)}
 .side.A{--sc:var(--A)}.side.B{--sc:var(--B)}
 .vmain{width:100%;border-radius:12px;background:#000;aspect-ratio:4/3;display:block}
-.vsmall{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
+.vsmall{display:grid;grid-template-columns:minmax(0,1fr);gap:8px;margin-top:8px}
 .vsmall video{width:100%;border-radius:10px;background:#000;aspect-ratio:4/3}
 .score{display:flex;align-items:center;gap:14px;margin-top:6px}
 .score input[type=range]{flex:1;accent-color:var(--sc);padding:0;background:none;border:0}
@@ -207,6 +207,12 @@ fieldset{border:0;margin:0;padding:0}fieldset:disabled{opacity:.48}
 .stats-table td,.stats-table th{text-align:left;padding:12px;border-bottom:1px solid var(--line)}
 @media(max-width:700px){header .bar{flex-wrap:wrap}.station-tools{width:100%}.stats-table{font-size:13px}
 header .steps{width:100%;display:grid;grid-template-columns:repeat(2,1fr)}header .steps button{white-space:nowrap;justify-content:flex-start}.steps .n{flex-shrink:0}}
+
+/* The hub scrolls the whole page; overlays stay within its visible viewport. */
+.embedded .modal{top:var(--hub-visible-top,0px);bottom:auto;height:var(--hub-visible-height,100vh)}
+.embedded .modal .card,.embedded #modal .card{max-height:calc(var(--hub-visible-height,100vh) - 40px);overflow:auto}
+.embedded .toast{bottom:auto;top:calc(var(--hub-visible-top,0px) + var(--hub-visible-height,100vh) - 24px);transform:translate(-50%,calc(-100% + 10px));transition:opacity .25s,transform .25s}
+.embedded .toast.on{transform:translate(-50%,-100%)}
 </style>
 </head>
 <body>
@@ -352,10 +358,10 @@ const CHECKS=[
  ['arms','Both arms respond','Every motor in the left and right arm answers. Nothing moves.',[['Check','arms']]],
  ['cameras','Cameras','Top camera plus the two wrist cameras.',[['Capture','cameras']]],
  ['router','Router connection','The Colosseum server that assigns policies and stores results.',[['Check','router']]],
- ['keys','AI API keys','Keys for the GPT, Grok and Claude policies. Claude also writes the review feedback.',[['API keys…','__keys'],['Verify','keys']]],
+ ['keys','AI API keys (optional)','Only needed for GPT, Grok or Claude policies and AI-assisted feedback.',[['API keys…','__keys'],['Verify','keys']]],
  ['server','Policy Server','Runs the policies on this computer.',[['Start','server'],['Stop','server_stop']]],
 ];
-const REQUIRED=['can','arms','cameras','router','keys','server'];
+const REQUIRED=['can','arms','cameras','router','server'];
 const api=(p,b)=>fetch(stationURL(p),b===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)}).then(async r=>{const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.detail||r.statusText);return j});
 function toast(t){const e=$('#toast');e.textContent=tr(t);e.classList.add('on');clearTimeout(e._t);e._t=setTimeout(()=>e.classList.remove('on'),3500)}
 const ICON={ok:'✓',fail:'!',idle:'·',running:''};

@@ -83,6 +83,8 @@ const ZH = {
  'Bring CAN up':'恢复 CAN','Both arms respond':'双臂响应','Every motor in the left and right arm answers. Nothing moves.':'读取两侧机械臂电机响应，不执行运动。',
  'Cameras':'相机','Top camera plus the two wrist cameras.':'主相机和两个腕部相机。','Capture':'采集画面',
  'Router connection':'Router 连接','The Colosseum server that assigns policies and stores results.':'分配策略并保存评测结果的 Colosseum 服务。',
+ 'AI API keys (optional)':'AI API 密钥（可选）',
+ 'Only needed for GPT, Grok or Claude policies and AI-assisted feedback.':'仅使用 GPT、Grok、Claude 策略或 AI 辅助评语时需要配置。',
  'AI API keys':'LLM 配置','Keys for the GPT, Grok and Claude policies. Claude also writes the review feedback.':'GPT、Grok、Claude 策略配置；Claude 可辅助生成评语。',
  'API keys…':'设置…','Verify':'验证','Policy Server':'Policy 服务','Runs the policies on this computer.':'运行工作站配置的策略服务。','Start':'启动','Stop':'停止',
  'Top':'主相机','Left wrist':'左腕相机','Right wrist':'右腕相机','not captured':'未采集','not set':'未设置',
