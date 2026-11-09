@@ -45,7 +45,7 @@ const ZH = {
  'Discard evaluation':'放弃评测','Reason for discarding':'放弃原因','Confirm discard':'确认放弃',
  'Close this evaluation without submitting scores. Recording files are kept.':'关闭本组评测，不提交评分。录制文件保留。',
  'A reason is required to discard':'请填写放弃原因',
- 'Loading video':'正在加载视频','Playback finished':'已播放结束','Playing':'播放中','Paused':'已暂停',
+ 'Buffering video':'视频缓冲中','Loading video':'正在加载视频','Playback finished':'已播放结束','Playing':'播放中','Paused':'已暂停',
  'Video unavailable':'视频不可用','Playback failed':'播放失败',
  'Scene:':'场景：','Score it first':'先完成评分','is recorded but not submitted.':'已录制，尚未提交。',
  'Policy TCP reachable (protocol/model readiness is checked by the Client)':'Policy 端口可达，协议和模型就绪状态由 Client 检查',

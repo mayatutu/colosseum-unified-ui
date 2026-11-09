@@ -214,27 +214,47 @@ header .steps{width:100%;display:grid;grid-template-columns:repeat(2,1fr)}header
 .embedded .toast{bottom:auto;top:calc(var(--hub-visible-top,0px) + var(--hub-visible-height,100vh) - 24px);transform:translate(-50%,calc(-100% + 10px));transition:opacity .25s,transform .25s}
 .embedded .toast.on{transform:translate(-50%,-100%)}
 
-/* One policy at a time: all camera views and playback controls fit together. */
-.review-player-tabs{display:flex;gap:8px;margin:0 0 10px}
-.review-player-tabs button{flex:1;font-weight:700}
-.review-player-tabs button[aria-selected=true]{background:var(--sc);color:white;border-color:transparent}
-.review-player-tabs [data-review-side=A]{--sc:var(--A)}
-.review-player-tabs [data-review-side=B]{--sc:var(--B)}
+/* Review sizing follows both the available viewport and each video's aspect ratio. */
+#evdetail,.review-player,.review-player .side{min-width:0}
+.review-player{--A:var(--acc);--B:var(--acc);--info:var(--acc);--infobg:var(--acc2)}
+.review-player-tabs{display:flex;gap:8px;margin:0 0 6px}
+.review-player-tabs button{flex:1;font-weight:700;padding:5px 12px}
+.review-player-tabs button[aria-selected=true]{background:var(--acc);color:white;border-color:transparent}
+.review-player .side{padding:12px}
 .review-player .side[hidden]{display:none}
-.review-cameras{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr);grid-template-rows:repeat(2,minmax(0,1fr));gap:8px;height:360px;margin-top:12px}
-.review-camera{position:relative;min-width:0;min-height:0;background:#000;border-radius:10px;overflow:hidden}
-.review-camera.main{grid-row:1/3}
+.review-toolbar{display:flex;justify-content:space-between;align-items:center;gap:6px 12px;flex-wrap:wrap}
+.review-title{display:flex;align-items:center;gap:8px;min-width:0;flex:1 1 180px}
+.review-title .chip{flex-shrink:0;padding:3px 8px}
+.review-title [data-user-text]{min-width:0;overflow-wrap:anywhere}
+.review-toolbar .row{gap:6px}
+.review-player .playback{display:flex;align-items:center;gap:10px;margin-top:6px!important;min-width:0}
+.review-player .playback input{flex:1;min-width:0;width:0;height:24px;padding:0;border:0;background:none;accent-color:var(--acc)}
+.review-player .playback .spread{gap:8px;flex-wrap:nowrap;font-size:12px;font-variant-numeric:tabular-nums}
+.review-player .review-stop{padding:4px 8px;margin:6px 0 0!important;font-size:12px;line-height:1.5}
+.review-cameras{display:grid;gap:8px;margin:8px auto 0;max-width:100%;width:100%;aspect-ratio:2/1;grid-template-columns:2fr 1fr;grid-template-rows:1fr 1fr}
+.review-camera{position:relative;min-width:0;min-height:0;background:#000;border-radius:8px;overflow:hidden}
+.review-camera.main{grid-column:1;grid-row:1/3}
+.review-cameras[data-layout=stacked] .main{grid-column:1/3;grid-row:1}
+.review-cameras[data-camera-count="1"] .main,.review-cameras[data-camera-count="2"] .main{grid-column:auto;grid-row:auto}
 .review-camera video{width:100%;height:100%;aspect-ratio:auto;object-fit:contain;display:block;border-radius:0}
-.review-camera .camera-name{position:absolute;left:8px;bottom:6px;padding:2px 8px;background:#000a;color:white;border-radius:6px;font-size:13px;pointer-events:none}
-.review-cameras[data-camera-count="1"]{grid-template-columns:1fr;grid-template-rows:1fr}
-.review-cameras[data-camera-count="1"] .main{grid-area:1/1}
-.review-cameras[data-camera-count="2"]{grid-template-columns:1fr 1fr;grid-template-rows:1fr}
-.review-cameras[data-camera-count="2"] .main{grid-area:auto}
-@media(max-width:700px){
- .review-cameras{grid-template-columns:1fr 1fr;grid-template-rows:2fr 1fr}
- .review-camera.main{grid-column:1/3;grid-row:1}
- .review-player .card{padding:12px}
+.review-camera .camera-name{position:absolute;left:6px;bottom:5px;padding:1px 6px;background:#000a;color:white;border-radius:4px;font-size:12px;pointer-events:none}
+.review-score{display:grid;grid-template-columns:auto minmax(0,1fr);gap:0 12px;align-items:center;margin-top:6px}
+.review-score>label{margin:0;text-transform:none;letter-spacing:0}
+.review-score .score{margin:0;gap:8px;min-width:0}
+.review-score .score input[type=range]{min-width:0}
+.review-score .score .num{width:58px;font-size:16px;padding:3px 6px;border-radius:8px}
+.review-score .score-ticks{grid-column:2;display:flex;justify-content:space-between;font-size:11px}
+@media(max-width:480px){
+ .review-score{grid-template-columns:minmax(0,1fr)}
+ .review-score .score-ticks{grid-column:1}
+ .review-score>label{margin-bottom:2px}
 }
+
+/* Visible only while the existing playback state reports a data wait. */
+.video-buffering{display:none;position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);align-items:center;gap:10px;white-space:nowrap;padding:10px 14px;border-radius:12px;background:rgba(30,20,14,.85);color:#fff;font-size:14px;pointer-events:none}
+.side:has([data-playstate][data-buffering=true]) .video-buffering{display:flex}
+.buffer-spinner{width:22px;height:22px;flex-shrink:0;border:3px solid #ffffff55;border-top-color:#fff;border-radius:50%;animation:review-buffer-spin .8s linear infinite}
+@keyframes review-buffer-spin{to{transform:rotate(360deg)}}
 </style>
 </head>
 <body>
@@ -369,8 +389,8 @@ header .steps{width:100%;display:grid;grid-template-columns:repeat(2,1fr)}header
 </div></div>
 <div class="toast" id="toast"></div>
 
-<script src="/i18n.js"></script>
-<script src="/station.js?v=d6833ba6117012ac"></script>
+<script src="/i18n.js?v=8e17f5e5869dd5c6"></script>
+<script src="/station.js?v=ab8e2dda1d9456b1"></script>
 <script>
 const $=s=>document.querySelector(s), esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let ST=null, CFG={}, view='setup', evSel=null, lastPromptId=null;
@@ -630,18 +650,18 @@ async function loadDetail(id){
   }
   const locked=['submitted','discarded','superseded'].includes(d.state)||d.busy, dis=locked?'disabled':'';pref=d.preference;factors={...(d.factors||{})};
   const names={head_image:'Top',left_image:'Left wrist',right_image:'Right wrist'};
-  const stopNote=s=>!s?'':s.reason=='stopped'?`<div class="banner bad" style="margin:12px 0 0">■ Stopped by the evaluator at step ${s.step}. Recorded up to that step.</div>`
-    :`<div class="banner info" style="margin:12px 0 0">✓ Ended by the evaluator as done at step ${s.step}.</div>`;
+  const stopNote=s=>!s?'':s.reason=='stopped'?`<div class="banner bad review-stop" style="margin:12px 0 0">■ Stopped by the evaluator at step ${s.step}. Recorded up to that step.</div>`
+    :`<div class="banner info review-stop" style="margin:12px 0 0">✓ Ended by the evaluator as done at step ${s.step}.</div>`;
   const side=r=>{const cameras=[...(r.cams.includes('head_image')?['head_image']:[]),...r.cams.filter(c=>c!=='head_image')];const v=c=>`<video data-side="${r.side}" src="${STATION_BASE}/video/${id}/${r.id}/${c}" muted preload="metadata" playsinline ${c==='head_image'?'class="vmain"':''}></video>`;
-    return `<div class="card side ${r.side}" data-review-panel="${r.side}" id="review-panel-${r.side}" role="tabpanel" aria-labelledby="review-tab-${r.side}"><div class="spread"><div><span class="chip ${r.side}" style="font-size:13px">Policy ${r.side}</span><div data-user-text style="overflow-wrap:anywhere">${esc(r.model_name||tr("Model not available"))}</div></div>
+    return `<div class="card side ${r.side}" data-review-panel="${r.side}" id="review-panel-${r.side}" role="tabpanel" aria-labelledby="review-tab-${r.side}"><div class="review-toolbar"><div class="review-title"><span class="chip ${r.side}" style="font-size:13px">Policy ${r.side}</span><div data-user-text style="overflow-wrap:anywhere">${esc(r.model_name||tr("Model not available"))}</div></div>
     <div class="row" style="gap:6px"><button class="small" data-play="${r.side}">▶ Play</button><button class="small" data-pause="${r.side}">❚❚</button><button class="small" data-restart="${r.side}">⟲</button>
     <select data-rate="${r.side}" style="width:auto;padding:5px 8px"><option>0.5</option><option selected>1</option><option>2</option><option>4</option></select></div></div>
     ${r.recorded?`<div class="playback" data-playback="${r.side}" style="margin-top:12px"><input type="range" data-seek="${r.side}" min="0" max="0" value="0" step="0.01" disabled aria-label="Playback position"><div class="spread"><span data-time="${r.side}">0:00 / --:--</span><span data-playstate="${r.side}" role="status">Loading video</span></div></div>`:''}
     ${stopNote(r.stop)}
-    ${r.recorded?`<div class="review-cameras" data-camera-count="${cameras.length}">${cameras.map((c,index)=>`<div class="review-camera ${index===0?'main':''}">${v(c)}<span class="camera-name">${names[c]||esc(c)}</span></div>`).join('')}</div>`:'<p class="mut">Not recorded.</p>'}
-    <label>How much of the task did ${r.side} complete?</label>
+    ${r.recorded?`<div class="review-cameras" data-camera-count="${cameras.length}">${cameras.map((c,index)=>`<div class="review-camera ${index===0?'main':''}">${v(c)}<span class="camera-name">${names[c]||esc(c)}</span>${index===0?'<div class="video-buffering"><span class="buffer-spinner" aria-hidden="true"></span><span>Buffering video</span></div>':''}</div>`).join('')}</div>`:'<p class="mut">Not recorded.</p>'}
+    <div class="review-score"><label for="sc-${r.side}">How much of the task did ${r.side} complete?</label>
     <div class="score"><input type="range" min="0" max="100" step="5" id="rg-${r.side}" value="${r.score??0}" ${dis}><input class="num" type="number" min="0" max="100" id="sc-${r.side}" value="${r.score??''}" placeholder="–" ${dis}></div>
-    <div class="mut" style="font-size:12px;display:flex;justify-content:space-between"><span>0 · nothing</span><span>50 · halfway</span><span>100 · fully done</span></div></div>`};
+    <div class="mut score-ticks"><span>0 · nothing</span><span>50 · halfway</span><span>100 · fully done</span></div></div></div>`};
   const banner={unknown:'<div class="banner warn">Submission confirmation is pending. Check Router status before retrying.</div>',submitting:'<div class="banner info">Submitting scores…</div>',submitted:'<div class="banner ok">✓ Submitted to the Router. It can no longer be changed here.</div>',discarded:'<div class="banner bad">Discarded. Nothing was published.</div>',
     superseded:'<div class="banner">A newer evaluation replaced this one on the Router, so it can no longer be submitted.</div>',interrupted:'<div class="banner warn">This evaluation was interrupted before both runs were recorded. Continue it from Record → “Continue an interrupted evaluation”.</div>'}[d.state]||(d.busy?'<div class="banner info">Submitting scores. Dataset upload follows the station configuration.</div>':'');
   $('#evdetail').innerHTML=`<div class="card" style="margin-bottom:16px"><div class="spread"><div class="eyebrow">Task</div><span class="badge st-${d.state}">${LBL[d.state]}</span></div>

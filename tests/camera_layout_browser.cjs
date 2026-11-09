@@ -5,12 +5,12 @@ const out=path.resolve(__dirname,'../validation');fs.mkdirSync(out,{recursive:tr
  const results=[];
  try{
   for(const [robot,port] of [['yam',Number(process.env.HUB_TEST_PORT||8870)],['franka',Number(process.env.REMOTE_TEST_PORT||8871)]]){
-   const page=await browser.newPage({viewport:{width:1440,height:1000}}),errors=[];
+   const page=await browser.newPage({viewport:{width:1440,height:1000},deviceScaleFactor:1.5}),errors=[];
    page.on('pageerror',e=>errors.push(e.message));
    await page.route('**/api/evals/same_record_id',async route=>{
     if(route.request().method()!=='GET')return route.continue();
     const response=await route.fetch(),data=await response.json();
-    for(const run of data.runs)run.cams=['head_image','left_image','right_image'];
+    for(const run of data.runs){run.cams=['head_image','left_image','right_image'];run.stop={reason:'done',step:202};}
     return route.fulfill({json:data});
    });
    await page.goto('http://127.0.0.1:'+port+'/#review');
@@ -19,7 +19,7 @@ const out=path.resolve(__dirname,'../validation');fs.mkdirSync(out,{recursive:tr
    await frame.waitForSelector('#reviewPlayer');
    await frame.waitForFunction(()=>document.querySelector('.review-cameras').style.height);
    const sizes=[];
-   for(const viewport of [{width:1440,height:1000},{width:1280,height:720},{width:1000,height:600},{width:1920,height:1080},{width:390,height:844}]){
+   for(const viewport of [{width:1440,height:1000},{width:1280,height:720},{width:1152,height:520},{width:1000,height:600},{width:800,height:450},{width:1920,height:1080},{width:768,height:900},{width:390,height:844},{width:320,height:568}]){
     await page.setViewportSize(viewport);await page.waitForTimeout(200);
     for(const side of ['A','B']){
      await frame.locator(`[data-review-side="${side}"]`).click();
@@ -32,9 +32,18 @@ const out=path.resolve(__dirname,'../validation');fs.mkdirSync(out,{recursive:tr
      for(const box of [...boxes,seek,play])assert.ok(box&&box.y>=-1&&box.y+box.height<=viewport.height+1,JSON.stringify({robot,viewport,side,boxes,seek,play}));
      assert.equal(await panel.locator('video').count(),3);
      assert.equal(await frame.locator('.side:not([hidden])').count(),1);
-     if(viewport.width>700){assert.ok(boxes[0].x<boxes[1].x);assert.ok(boxes[0].height>boxes[1].height*1.9);assert.ok(boxes[2].y>=boxes[1].y+boxes[1].height)}
+     if(await panel.locator('.review-cameras').getAttribute('data-layout')==='side'){assert.ok(boxes[0].x<boxes[1].x);assert.ok(boxes[0].height>boxes[1].height*1.9);assert.ok(boxes[2].y>=boxes[1].y+boxes[1].height)}
      else {assert.ok(boxes[1].y>=boxes[0].y+boxes[0].height);assert.ok(Math.abs(boxes[1].y-boxes[2].y)<2)}
      assert.equal(await panel.locator('video').first().evaluate(e=>getComputedStyle(e).objectFit),'contain');
+     const dimensions=await panel.locator('video').evaluateAll(videos=>videos.map(v=>{
+      const b=v.getBoundingClientRect(),ratio=v.videoWidth/v.videoHeight,w=Math.min(b.width,b.height*ratio);
+      return {fill:w*w/ratio/(b.width*b.height),height:b.height,filter:getComputedStyle(v).filter};
+     }));
+     for(const d of dimensions){assert.ok(d.fill>.97,JSON.stringify({viewport,side,d}));assert.equal(d.filter,'none')}
+     assert.ok(dimensions[0].height>Math.min(viewport.height*.45,(viewport.width-66)*.65));
+     const score=await frame.locator('#sc-'+side).boundingBox();assert.ok(score.y>=0&&score.y+score.height<=viewport.height+1);
+     assert.ok(await panel.evaluate(p=>[...p.querySelectorAll('*')].every(e=>e.getBoundingClientRect().right<=innerWidth+1)));
+     assert.equal(await panel.locator('.chip').evaluate(e=>getComputedStyle(e).backgroundColor),'rgb(180, 83, 42)');
     }
     const first=await frame.locator('#reviewPlayer').evaluate(e=>e.getBoundingClientRect().height);
     await page.waitForTimeout(250);const second=await frame.locator('#reviewPlayer').evaluate(e=>e.getBoundingClientRect().height);
