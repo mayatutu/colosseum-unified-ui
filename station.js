@@ -10,6 +10,7 @@ function bindStationFormDraft(){
  if(saved)for(const id of ids)if(saved[id]!==undefined)$('#'+id).value=saved[id];
  const save=()=>writeDraft(key,Object.fromEntries(ids.map(id=>[id,$('#'+id).value])));
  for(const id of ids){$('#'+id).addEventListener('input',save);$('#'+id).addEventListener('change',save)}
+ bindTaskTranslation();
 }
 function clearReviewDraft(id){try{sessionStorage.removeItem('station-review:'+STATION_KEY+':'+id)}catch(e){}}
 function bindReviewDraft(id,d){
@@ -139,34 +140,54 @@ function bindPlayback(){
 }
 
 const translationOriginals=new Map();
+let translationRequest=0;
 function bindFeedbackTranslation(id){
- const fb=$('#fb'),btn=$('#translateBtn'),restore=$('#restoreTranslation');
- const key='colosseum-translation-original:'+STATION_KEY+':'+id;
- try{if(!translationOriginals.has(id)&&sessionStorage.getItem(key)!==null)translationOriginals.set(id,sessionStorage.getItem(key))}catch(e){}
- restore.hidden=!translationOriginals.has(id);
- restore.onclick=()=>{fb.value=translationOriginals.get(id);fb.dispatchEvent(new Event('input',{bubbles:true}))};
+ bindTextTranslation({input:$('#fb'),btn:$('#translateBtn'),restore:$('#restoreTranslation'),
+  key:'colosseum-translation-original:'+STATION_KEY+':'+id,
+  originalLabel:'Original comment',emptyMessage:'Write an overall comment first',
+  changedMessage:'The comment changed. Close this preview and translate the latest text.'});
+}
+function bindTaskTranslation(){
+ bindTextTranslation({input:$('#instruction'),btn:$('#translateTaskBtn'),restore:$('#restoreTaskTranslation'),
+  key:'colosseum-task-translation-original:'+STATION_KEY,
+  originalLabel:'Original task',emptyMessage:'Write a task first',
+  changedMessage:'The task changed. Close this preview and translate the latest text.'});
+}
+function clearTaskTranslation(){
+ const key='colosseum-task-translation-original:'+STATION_KEY;
+ translationRequest++;translationOriginals.delete(key);
+ try{sessionStorage.removeItem(key)}catch(e){}
+ $('#restoreTaskTranslation').hidden=true;
+ if($('#translationDialog').dataset.field==='instruction')$('#translationDialog').classList.remove('on');
+}
+function bindTextTranslation({input,btn,restore,key,originalLabel,emptyMessage,changedMessage}){
+ try{if(!translationOriginals.has(key)&&sessionStorage.getItem(key)!==null)translationOriginals.set(key,sessionStorage.getItem(key))}catch(e){}
+ restore.hidden=!translationOriginals.has(key);
+ restore.onclick=()=>{input.value=translationOriginals.get(key);input.dispatchEvent(new Event('input',{bubbles:true}))};
  btn.onclick=async()=>{
-  const original=fb.value;
-  if(!original.trim())return toast('Write an overall comment first');
+  const original=input.value;
+  if(!original.trim())return toast(emptyMessage);
+  const request=++translationRequest;
   btn.disabled=true;btn.textContent=tr('Translating…');
   try{
    const result=await api('/api/translate',{text:original});
-   if(!fb.isConnected)return;
+   if(!input.isConnected||request!==translationRequest)return;
    const modal=$('#translationDialog');
+   modal.dataset.field=input.id;$('#translationOriginalLabel').textContent=tr(originalLabel);
    $('#translationOriginal').textContent=original;$('#translationResult').value=result.text;
    $('#translationError').textContent='';modal.classList.add('on');
    $('#translationCancel').onclick=()=>modal.classList.remove('on');
    $('#translationUse').onclick=()=>{
-    if(!fb.isConnected||fb.value!==original){$('#translationError').textContent=tr('The comment changed. Close this preview and translate the latest text.');return}
+    if(!input.isConnected||request!==translationRequest||input.value!==original){$('#translationError').textContent=tr(changedMessage);return}
     const translated=$('#translationResult').value.trim();
     if(!translated){$('#translationError').textContent=tr('Translation is empty');return}
-    translationOriginals.set(id,original);
+    translationOriginals.set(key,original);
     try{sessionStorage.setItem(key,original)}catch(e){}
-    restore.hidden=false;fb.value=translated;fb.dispatchEvent(new Event('input',{bubbles:true}));
-    modal.classList.remove('on');fb.focus();
+    restore.hidden=false;input.value=translated;input.dispatchEvent(new Event('input',{bubbles:true}));
+    modal.classList.remove('on');input.focus();
    };
    applyLanguage();$('#translationResult').focus();
-  }catch(e){toast(e.message)}finally{btn.disabled=false;btn.textContent=tr('Translate to English')}
+  }catch(e){if(request===translationRequest)toast(input.id==='instruction'&&e.message==='Translation failed. Your original comment is unchanged.'?'Translation failed. Your original task is unchanged.':e.message)}finally{btn.disabled=false;btn.textContent=tr('Translate to English')}
  };
 }
 

@@ -296,6 +296,7 @@ header .steps{width:100%;display:grid;grid-template-columns:repeat(2,1fr)}header
       <div class="card">
         <label for="instruction" style="margin-top:0">Task for the robot</label>
         <textarea id="instruction" placeholder="e.g. Pick up the red cup and place it on the plate"></textarea>
+        <div class="row"><button type="button" class="small" id="translateTaskBtn">Translate to English</button><button type="button" class="small" id="restoreTaskTranslation" hidden>Restore original task</button></div>
         <label for="scene">Scene / location</label>
         <input id="scene" placeholder="e.g. beside the sofa or refrigerator">
         <div class="row" style="gap:12px">
@@ -358,7 +359,7 @@ header .steps{width:100%;display:grid;grid-template-columns:repeat(2,1fr)}header
 <h3>Client</h3><pre id="clientLog"></pre><h3>Policy</h3><pre id="policyLog"></pre></details></main>
 <div class="modal" id="translationDialog" role="dialog" aria-modal="true" aria-labelledby="translationTitle"><div class="card" style="max-height:85vh;overflow:auto;background:var(--bg)">
 <h2 id="translationTitle">Review English translation</h2>
-<label>Original comment</label><pre id="translationOriginal" data-user-text style="white-space:pre-wrap;overflow-wrap:anywhere"></pre>
+<label id="translationOriginalLabel">Original comment</label><pre id="translationOriginal" data-user-text style="white-space:pre-wrap;overflow-wrap:anywhere"></pre>
 <label for="translationResult">English translation</label><textarea id="translationResult" style="min-height:140px"></textarea>
 <p>Check the translation before using it. Your original is kept in this browser tab.</p>
 <p id="translationError" role="alert"></p>
@@ -389,8 +390,8 @@ header .steps{width:100%;display:grid;grid-template-columns:repeat(2,1fr)}header
 </div></div>
 <div class="toast" id="toast"></div>
 
-<script src="/i18n.js?v=8e17f5e5869dd5c6"></script>
-<script src="/station.js?v=ab8e2dda1d9456b1"></script>
+<script src="/i18n.js?v=d26a2c463260a7fd"></script>
+<script src="/station.js?v=46d7323d4169d8e1"></script>
 <script>
 const $=s=>document.querySelector(s), esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let ST=null, CFG={}, view='setup', evSel=null, lastPromptId=null;
@@ -496,6 +497,7 @@ addEventListener('keydown',e=>{if(e.key=='Escape'&&ST&&ST.run.phase=='running'&&
 $('#toReview').onclick=()=>{evSel=ST.run.eval_id;api('/api/eval/reset',{});show('review')};
 let recoveryBusy=false;
 function blankRoundForm(id){
+  clearTaskTranslation();
   $('#instruction').value='';$('#scene').value='';$('#resume').value='';$('#maxsteps').value=CFG.max_steps;
   $('#scene').dispatchEvent(new Event('input'));
   writeDraft('station-form:'+STATION_KEY,{instruction:'',scene:'',evaluator:$('#evaluator').value,maxsteps:String(CFG.max_steps)});
