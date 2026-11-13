@@ -16,6 +16,7 @@ from bridge import Bridge, RemoteError
 from station import Station
 
 ROOT = Path(__file__).resolve().parent
+WS_PROTOCOL = 'websockets-sansio'
 
 
 def create_app(station, bridge=None):
@@ -111,9 +112,12 @@ def create_app(station, bridge=None):
         text = body.get('text')
         if not isinstance(text, str) or not text.strip():
             raise HTTPException(400, 'Write an overall comment first')
-        url = station.data.get('maintenance', {}).get('url', '').rstrip('/')
-        if not url:
+        # Translation may remain on the original UI while maintenance targets
+        # an isolated candidate service. Existing stations keep their fallback.
+        url = station.data.get('translation_url', station.data.get('maintenance', {}).get('url', ''))
+        if not isinstance(url, str) or not url.strip():
             raise HTTPException(503, 'Translation backend is not configured')
+        url = url.strip().rstrip('/')
         # Reuse only the old UI's translation route; no robot/worker operations.
         request = urllib.request.Request(url + '/api/translate',
             data=json.dumps({'text': text}, ensure_ascii=False).encode('utf-8'),
@@ -198,4 +202,5 @@ if __name__ == '__main__':
     p.add_argument('--host', default='127.0.0.1')
     p.add_argument('--port', type=int, default=8770)
     a = p.parse_args()
-    uvicorn.run(create_app(Station.load(a.station)), host=a.host, port=a.port)
+    # The legacy transport can assert when data and keepalive await backpressure together.
+    uvicorn.run(create_app(Station.load(a.station)), host=a.host, port=a.port, ws=WS_PROTOCOL)

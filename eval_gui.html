@@ -271,6 +271,7 @@ header .steps{width:100%;display:grid;grid-template-columns:repeat(2,1fr)}header
 </div></header>
 
 <main>
+<div id="connectionStatus" class="banner warn" role="status" hidden style="display:none"></div>
 <!-- 1. SETUP -->
 <section class="view" id="v-setup">
   <div class="hero">
@@ -310,8 +311,8 @@ header .steps{width:100%;display:grid;grid-template-columns:repeat(2,1fr)}header
         <p class="mut" style="font-size:13px;margin:10px 0 0">You'll confirm before the robot moves. Keep the emergency stop within reach.</p>
       </div>
       <div>
-        <div class="live"><img id="pv" alt=""><div class="empty" id="pvEmpty">Top camera preview<br><button class="small" id="pvBtn" style="margin-top:10px">Show camera</button></div>
-          <div class="overlay top"><span class="chip">Top camera</span></div></div>
+        <div class="live"><img id="pv" alt=""><div class="empty" id="pvEmpty"><span id="pvPlaceholder">Top camera preview</span><br><button class="small" id="pvBtn" style="margin-top:10px">Show camera</button></div>
+          <div class="overlay top"><span class="chip" id="pvCaption">Top camera</span></div></div>
         <p class="mut" style="font-size:13px">Check the scene looks right before you start.</p>
       </div>
     </div>
@@ -390,11 +391,17 @@ header .steps{width:100%;display:grid;grid-template-columns:repeat(2,1fr)}header
 </div></div>
 <div class="toast" id="toast"></div>
 
-<script src="/i18n.js?v=d26a2c463260a7fd"></script>
-<script src="/station.js?v=46d7323d4169d8e1"></script>
+<script src="/i18n.js?v=e3293afd8ff1297e"></script>
+<script src="/station.js?v=candidate-maintenance-20261113"></script>
 <script>
 const $=s=>document.querySelector(s), esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let ST=null, CFG={}, view='setup', evSel=null, lastPromptId=null;
+// Logical sensor names are not evidence of a Franka camera's physical mounting.
+function cameraLabel(camera, withSerial=true){
+  if(CFG.robot!=='franka')return {head_image:'Top',left_image:'Left wrist',right_image:'Right wrist'}[camera]||camera;
+  const serial=withSerial&&CFG.camera_serials?.[camera];
+  return serial?camera+' · '+serial:camera;
+}
 const CHECKS=[
  ['gpu','GPU is free','Nothing else is using the graphics card.',[['Check','gpu'],['Free GPU','free_gpu']]],
  ['can','Robot connection (CAN)','The cables from the computer to both arms.',[['Check','can'],['Bring CAN up','can_reset']]],
@@ -443,7 +450,7 @@ function renderChecks(){
   const thumbs=ST.thumbs.join(),ok=ST.checks.cameras.status=='ok';
   if($('#camgrid').dataset.k!==thumbs+ok){$('#camgrid').dataset.k=thumbs+ok;
     $('#camgrid').innerHTML=(CFG.cameras||[]).map(c=>`<div class="cam">${ST.thumbs.includes(c)?`<img src="${STATION_BASE}/api/thumb/${c}.jpg?${Date.now()}">`:'not captured'}
-      <span class="tag">${ST.thumbs.includes(c)?'<span class="tick">✓</span>':''}${{head_image:'Top',left_image:'Left wrist',right_image:'Right wrist'}[c]||c}</span></div>`).join('')}
+      <span class="tag">${ST.thumbs.includes(c)?'<span class="tick">✓</span>':''}${esc(cameraLabel(c))}</span></div>`).join('')}
   const kr=JSON.stringify(ST.keys||[]);
   if($('#keyrows').dataset.k!==kr){$('#keyrows').dataset.k=kr;
     $('#keyrows').innerHTML=(ST.keys||[]).map(k=>`<div class="keyrow ${k.ok?'ok':'bad'}"><span class="kdot">${k.ok?'✓':'!'}</span><span class="kname"><b>${esc(k.label)}</b><small>${esc(k.source||'not set')}</small></span><span class="kmsg">${esc(k.msg)}</span></div>`).join('')}
@@ -474,7 +481,9 @@ async function loadResumable(){
   const evs=await allEvaluations();
   const sel=$('#resume'),cur=sel.value;
   sel.innerHTML='<option value="">— start a new one —</option>'+evs.filter(e=>e.state=='interrupted'&&!e.recording_error).map(e=>`<option value="${e.id}">${esc(e.instruction)} · ${new Date(e.time*1000).toLocaleString()}</option>`).join('');sel.value=cur;
-  const pend=evs.filter(e=>e.managed&&!['submitted','discarded'].includes(e.state));
+  renderPending(ST?.pending??evs.filter(e=>e.managed&&!['submitted','discarded'].includes(e.state)));
+}
+function renderPending(pend){
   $('#pendingBanner').innerHTML=pend.length?`<div class="banner warn">⚠ <div><b><span data-user-text>“${esc(pend[0].instruction)}”</span> is recorded but not submitted.</b> Submit or discard this A/B pair before starting the next one. <a href="#" id="goPend" style="color:inherit">Score it first</a></div></div>`:'';
   if(pend.length)$('#goPend').onclick=e=>{e.preventDefault();evSel=pend[0].id;show('review')};
 }
@@ -490,7 +499,9 @@ $('#start').onclick=async()=>{
   try{localStorage.setItem('evform:'+STATION_KEY,JSON.stringify({scene:body.scene,evaluator:body.evaluator}))}catch(e){}
   try{await api('/api/eval/start',body)}catch(e){toast(e.message)}
 };
-const stopRun=reason=>api('/api/eval/finish',{reason,expected_eid:ST?.run.eval_id}).catch(e=>toast(e.message));
+const stopRun=reason=>api('/api/eval/finish',{reason,expected_eid:ST?.run.eval_id})
+  .catch(e=>toast(e instanceof TypeError?'Request interrupted; checking task status. The command will not be resent.':e.message))
+  .finally(()=>refreshState());
 $('#killBtn').onclick=()=>stopRun('stopped');
 $('#doneBtn').onclick=()=>stopRun('completed');
 addEventListener('keydown',e=>{if(e.key=='Escape'&&ST&&ST.run.phase=='running'&&!$('#modal').classList.contains('on')){e.preventDefault();stopRun('stopped')}});
@@ -566,7 +577,7 @@ function renderPrompt(){
       referenceBox.innerHTML='<h3>'+tr('Initial placement reference')+'</h3><p>'+tr('Restore the objects to match these photos before continuing.')+'</p><div class="scene-reference-images"></div>';
       for(const camera of reference.cameras){
         const figure=document.createElement('div'),label=document.createElement('div'),image=document.createElement('img');
-        label.textContent=tr(camera==='left_image'?'Left camera':'Right camera');image.alt=label.textContent;
+        label.textContent=CFG.robot==='franka'?cameraLabel(camera,false):tr(camera==='left_image'?'Left camera':'Right camera');image.alt=label.textContent;
         image.src=stationURL('/api/scene-reference/'+encodeURIComponent(reference.evaluation_id)+'/'+camera+'.png?v='+encodeURIComponent(reference.version));
         image.onload=()=>{referencePending--;if(!referencePending&&!referenceFailed)$('#mActs').querySelectorAll('.primary').forEach(b=>b.disabled=false)};
         image.onerror=()=>{referenceFailed=true;$('#mError').textContent=tr('Reference image could not be loaded. Refresh before continuing.');$('#mActs').querySelectorAll('.primary').forEach(b=>b.disabled=true)};
@@ -651,7 +662,6 @@ async function loadDetail(id){
     $('#restartFailed').onclick=()=>restartFailed(id,$('#restartFailed'));if(d.busy)pollBusy(id);return;
   }
   const locked=['submitted','discarded','superseded'].includes(d.state)||d.busy, dis=locked?'disabled':'';pref=d.preference;factors={...(d.factors||{})};
-  const names={head_image:'Top',left_image:'Left wrist',right_image:'Right wrist'};
   const stopNote=s=>!s?'':s.reason=='stopped'?`<div class="banner bad review-stop" style="margin:12px 0 0">■ Stopped by the evaluator at step ${s.step}. Recorded up to that step.</div>`
     :`<div class="banner info review-stop" style="margin:12px 0 0">✓ Ended by the evaluator as done at step ${s.step}.</div>`;
   const side=r=>{const cameras=[...(r.cams.includes('head_image')?['head_image']:[]),...r.cams.filter(c=>c!=='head_image')];const v=c=>`<video data-side="${r.side}" src="${STATION_BASE}/video/${id}/${r.id}/${c}" muted preload="metadata" playsinline ${c==='head_image'?'class="vmain"':''}></video>`;
@@ -660,7 +670,7 @@ async function loadDetail(id){
     <select data-rate="${r.side}" style="width:auto;padding:5px 8px"><option>0.5</option><option selected>1</option><option>2</option><option>4</option></select></div></div>
     ${r.recorded?`<div class="playback" data-playback="${r.side}" style="margin-top:12px"><input type="range" data-seek="${r.side}" min="0" max="0" value="0" step="0.01" disabled aria-label="Playback position"><div class="spread"><span data-time="${r.side}">0:00 / --:--</span><span data-playstate="${r.side}" role="status">Loading video</span></div></div>`:''}
     ${stopNote(r.stop)}
-    ${r.recorded?`<div class="review-cameras" data-camera-count="${cameras.length}">${cameras.map((c,index)=>`<div class="review-camera ${index===0?'main':''}">${v(c)}<span class="camera-name">${names[c]||esc(c)}</span>${index===0?'<div class="video-buffering"><span class="buffer-spinner" aria-hidden="true"></span><span>Buffering video</span></div>':''}</div>`).join('')}</div>`:'<p class="mut">Not recorded.</p>'}
+    ${r.recorded?`<div class="review-cameras" data-camera-count="${cameras.length}">${cameras.map((c,index)=>`<div class="review-camera ${index===0?'main':''}">${v(c)}<span class="camera-name">${esc(cameraLabel(c,false))}</span>${index===0?'<div class="video-buffering"><span class="buffer-spinner" aria-hidden="true"></span><span>Buffering video</span></div>':''}</div>`).join('')}</div>`:'<p class="mut">Not recorded.</p>'}
     <div class="review-score"><label for="sc-${r.side}">How much of the task did ${r.side} complete?</label>
     <div class="score"><input type="range" min="0" max="100" step="5" id="rg-${r.side}" value="${r.score??0}" ${dis}><input class="num" type="number" min="0" max="100" id="sc-${r.side}" value="${r.score??''}" placeholder="–" ${dis}></div>
     <div class="mut score-ticks"><span>0 · nothing</span><span>50 · halfway</span><span>100 · fully done</span></div></div></div>`};
@@ -728,23 +738,84 @@ function pollBusy(id){const t=setInterval(async()=>{const d=await api('/api/eval
 
 // ---- live link ----
 let lastBlob=null;
+let liveSocket=null,reconnectTimer=null,statePoll=null,liveStarted=false;
+let lastStateAt=0,lastSocketStateAt=0,socketStartedAt=0,lastPollAt=0,stateVersion=0;
+const STATE_STALE_MS=5000,STATE_POLL_MS=3000,STATE_TIMEOUT_MS=4000;
+function updateConnectionStatus(){
+  if(!liveStarted)return;
+  const now=performance.now(),fresh=lastStateAt>0&&now-lastStateAt<STATE_STALE_MS;
+  const streaming=liveSocket&&lastSocketStateAt>0&&now-lastSocketStateAt<STATE_STALE_MS;
+  const banner=$('#connectionStatus');banner.hidden=!!streaming;banner.style.display=streaming?'none':'';
+  banner.textContent=streaming?'':tr(fresh?'Live connection interrupted. Task status is current; reconnecting…':'Connection interrupted. Task status is unknown; reconnecting…');
+  if(ST?.recording&&!fresh){
+    $('#phaseChip').textContent=tr('Task status unknown');
+    const current=$('#timeline .tl.cur .mut');
+    if(current){current.textContent=tr('Task status unknown');$('#timeline')._html=null}
+  }
+}
+function acceptState(value){
+  if(!value?.run||!Array.isArray(value.pending))throw new Error('Invalid station state');
+  const prev=ST;ST=value;stateVersion++;lastStateAt=performance.now();
+  renderChecks();renderRun();renderPrompt();mood();
+  const restarted=ST.run.restarted_from,key='handled-restart:'+STATION_KEY;
+  if(restarted&&!ST.recording&&ST.run.phase==='idle'&&readDraft(key)!==restarted){
+    writeDraft(key,restarted);blankRoundForm(restarted);
+  }
+  if(!ST.preview&&!ST.recording)$('#pvEmpty').style.display='';
+  const pendingKey=JSON.stringify(ST.pending);
+  if(pendingKey!==JSON.stringify(prev?.pending))renderPending(ST.pending);
+  if(prev&&prev.recording&&!ST.recording&&view=='record')loadResumable().catch(e=>toast(e.message));
+  updateConnectionStatus();
+}
+function refreshState(){
+  if(statePoll)return statePoll;
+  lastPollAt=performance.now();
+  const version=stateVersion,controller=new AbortController();
+  const timeout=setTimeout(()=>controller.abort(),STATE_TIMEOUT_MS);
+  statePoll=(async()=>{
+    try{
+      const response=await fetch(stationURL('/api/state'),{signal:controller.signal,cache:'no-store'});
+      if(!response.ok)throw new Error('State request failed');
+      const value=await response.json();
+      // A delayed HTTP response must not overwrite a newer WebSocket snapshot.
+      if(version===stateVersion)acceptState(value);
+    }catch(e){updateConnectionStatus()}
+    finally{clearTimeout(timeout);statePoll=null}
+  })();
+  return statePoll;
+}
+function scheduleReconnect(){
+  if(reconnectTimer===null)reconnectTimer=setTimeout(connect,1500);
+}
 function connect(){
+  clearTimeout(reconnectTimer);reconnectTimer=null;liveStarted=true;
+  const old=liveSocket;liveSocket=null;
+  if(old){old.onmessage=null;old.onclose=null;old.onerror=null;old.close()}
+  socketStartedAt=performance.now();
   const ws=new WebSocket(`${location.protocol==='https:'?'wss':'ws'}://${location.host}${STATION_BASE}/ws`);ws.binaryType='blob';
+  liveSocket=ws;
   ws.onmessage=m=>{
+    if(liveSocket!==ws)return;
     if(typeof m.data!=='string'){const u=URL.createObjectURL(m.data);const img=ST&&ST.recording?$('#lv'):$('#pv');img.src=u;
       if(lastBlob)setTimeout((b=>()=>URL.revokeObjectURL(b))(lastBlob),1000);lastBlob=u;
       if(img.id=='pv')$('#pvEmpty').style.display='none';return}
-    const prev=ST;ST=JSON.parse(m.data);renderChecks();renderRun();renderPrompt();mood();
-    const restarted=ST.run.restarted_from,key='handled-restart:'+STATION_KEY;
-    if(restarted&&!ST.recording&&ST.run.phase==='idle'&&readDraft(key)!==restarted){
-      writeDraft(key,restarted);blankRoundForm(restarted);
-    }
-    if(!ST.preview&&!ST.recording)$('#pvEmpty').style.display='';
-    if(prev&&prev.recording&&!ST.recording&&view=='record')loadResumable();
+    try{const value=JSON.parse(m.data);acceptState(value);lastSocketStateAt=performance.now();updateConnectionStatus()}
+    catch(e){console.error('Station state update failed',e)}
   };
-  ws.onclose=()=>{toast('Lost connection to the station, reconnecting…');setTimeout(connect,1500)};
+  ws.onclose=()=>{if(liveSocket!==ws)return;liveSocket=null;lastSocketStateAt=0;updateConnectionStatus();scheduleReconnect();refreshState()};
+  updateConnectionStatus();
 }
+setInterval(()=>{
+  if(!liveStarted)return;
+  const now=performance.now();updateConnectionStatus();
+  if(!liveSocket||now-lastSocketStateAt>=STATE_STALE_MS){
+    if(now-lastPollAt>=STATE_POLL_MS)refreshState();
+    if(liveSocket&&now-socketStartedAt>=8000)connect();
+  }
+},1000);
 api('/api/config').then(c=>{CFG=c;setupStation(c);$('#sub').textContent=`${c.robot.toUpperCase()} · ${c.institution}`;
+  if(c.robot==='franka')for(const id of ['pvCaption','pvPlaceholder']){$('#'+id).textContent=cameraLabel('head_image');$('#'+id).setAttribute('data-user-text','')}
+  $('#pv').alt=cameraLabel('head_image');
   let saved={};try{saved=JSON.parse(localStorage.getItem('evform:'+STATION_KEY)||'{}')}catch(e){}
   $('#scene').value=c.scene_persistence_enabled?(c.scene||''):(saved.scene||c.scene||'');$('#evaluator').value=saved.evaluator||c.evaluator||'';$('#maxsteps').value=c.max_steps;bindStationFormDraft();setupSceneSaving();connect();show(['setup','record','review','stats'].includes(location.hash.slice(1))?location.hash.slice(1):'setup');});
 </script>

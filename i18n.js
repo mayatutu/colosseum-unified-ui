@@ -1,5 +1,9 @@
 /* Translate UI chrome only. User inputs, task text, raw logs and provider errors stay verbatim. */
 const ZH = {
+ 'Live connection interrupted. Task status is current; reconnecting…':'实时连接中断，已核对当前任务状态，正在恢复连接…',
+ 'Connection interrupted. Task status is unknown; reconnecting…':'连接中断，当前任务状态待确认，正在重新连接…',
+ 'Task status unknown':'任务状态待确认',
+ 'Request interrupted; checking task status. The command will not be resent.':'请求中断，正在核对任务状态，不会自动重复发送指令。',
  'Task difficulty (1–10)':'任务难度（1–10）',
  '1 is easiest; 10 is hardest. Enter once for this task; shared by A and B.':'1 最容易，10 最难。每个任务填写一次，A/B 共用。',
  'Task difficulty is required before submitting':'请填写任务难度后再提交',

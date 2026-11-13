@@ -76,12 +76,16 @@ def test_provider_verification_uses_actual_yam_model_url_and_auth(tmp_path):
     assert requests[1][0] == 'https://relay.example/v1/models'
 
 
-def test_franka_does_not_accept_remote_key_edits(tmp_path):
+def test_franka_saves_keys_on_client_with_official_transport_validation(tmp_path):
     runtime = object.__new__(Runtime)
     runtime.station = station(tmp_path, 'franka')
-    with pytest.raises(ValueError, match='managed on the Policy host'):
-        runtime.save_keys({'openai': 'must-not-be-written'})
-    assert not (tmp_path / 'llm-settings.json').exists()
+    runtime.c = SimpleNamespace()
+    runtime.station.file('robot_config').write_text(yaml.safe_dump({
+        'url': 'ws://127.0.0.1:1', 'token': 'offline-test', 'cameras': {}, 'test': True,
+        'policy_server_url': 'ws://127.0.0.1:18001'}))
+    runtime.save_keys({'openai': 'offline-test-key'})
+    assert runtime.c.CONFIG.llm_api_keys == {'openai': 'offline-test-key'}
+    assert (tmp_path / 'llm-settings.json').exists()
 
 
 def test_exported_lerobot_video_survives_deleted_pngs(tmp_path):

@@ -1,4 +1,33 @@
-# 共同 UI 更新（2026-11-09）
+# UI 更新
+
+## 2026-11-13：Franka 候选 Client 对接
+
+本次同步现有 Franka 候选 UI，保留统一选机、YAM 页面、评分、任务翻译、场景参考和飞书提交。新增功能包括：
+
+- 独立的候选 Policy 维护通道，核对指定 systemd 用户服务的 Python 路径；录制及清理期间拒绝维护，不通过此通道控制旧服务。
+- 可选的 NUC Docker 按钮，调用本机旧后台的 `/api/restart_docker`。未配置时按钮禁用；运行中拒绝操作，失败不自动重试。RPC 响应成功不代表机械臂可以运动。
+- 翻译、飞书发送器与 Policy 维护分别配置；Franka 密钥保存在 Client 本机，保存前使用兼容 Client 的凭据校验，不把密钥写入仓库。
+- 相机实时标签使用配置中的通道和序列号，历史录像不补写当前序列号。
+- WebSocket 中断后用只读状态查询辅助恢复，明确显示状态未知；停止请求失败后查询状态，不自动重复下发停止命令。
+- 录制后在评分页填写任务难度；离线评测不把 Router 上的未提交轮次标为已替代。
+
+### 配置与依赖
+
+使用已有 legacy 配置可继续保留旧维护后台。候选模式参考 `configs/franka-candidate.yaml`，复制成 `.local.yaml` 后填写路径与 SSH 主机。`maintenance.command` 是管理员配置的参数列表，不能由网页请求指定。Policy 主机上的 `candidate_host.py` 从 `COLOSSEUM_CANDIDATE_ROOT` 和 `COLOSSEUM_POLICY_UNIT` 读取环境目录与服务名；默认路径是不可直接使用的占位符。启动命令中的路径须与目标服务实际配置一致。
+
+需要兼容的 Client 源码及其环境，尤其是 `colosseum_client.local_policy.capabilities`、`llm_credentials.API_URLS`、Client 配置凭据校验和现有录制/回放接口。GUI 的 requirements 不会安装 Client 或本地机器人插件。此次 Git 发布不包含 Client/Policy 修复、权重、设备配置或完整部署包；不能据此声称任意官方版本均已兼容。
+
+`nuc_maintenance_url` 仅接受 HTTP 回环地址，只有显式配置后才启用 NUC 入口。维护会影响真实设备服务，点击前须结束评测并确认现场可操作。发布验证仅使用模拟接口，不执行 NUC 重启或机器人动作。
+
+数据上传继续使用与本站 Client 匹配的官方 `colosseum-upload-dataset`（或对应 Python 模块），具体参数以该版本 `--help` 为准。本次不引入旧的按日期上传包装脚本，也不自动上传历史数据。
+
+升级时保留本机 `.local.yaml`、数据库、初始场景参考、录像与凭据。先核对 Client 兼容性，再在空闲时按现场部署流程更新和重启 UI；这次 Git 推送不自动部署任何工作站。
+
+### 本地验证方式
+
+使用现有兼容 Client 环境运行受影响测试。将 `COLOSSEUM_TEST_CLIENT` 指向 Client 根目录，并将其 `src` 加入 `PYTHONPATH`；Franka/YAM 使用不同 Client 时，分别设置 `COLOSSEUM_TEST_FRANKA_CLIENT`、`COLOSSEUM_TEST_YAM_CLIENT`；不要用 Franka 专属 Client 替代 YAM 的现有环境。相关测试只使用临时数据和模拟服务。相机标签测试使用合成序列号。发布前执行 `python tools/check_publish_privacy.py --history`，禁止现场配置、凭据和真实评测材料进入提交。
+
+## 2026-11-09：共同 UI 更新
 
 YAM 和 Franka 使用同一组界面调整：回放用 A/B 页签切换；每个策略的主摄像头在左侧，另外两路在右侧上下排列，三路视频和播放控件按窗口高度同时完整显示；窄窗口为上方主画面、下方并排两路；LLM 密钥标记为可选，不再作为每次开始录制前的必需检查；顶部导航和选机栏随整页滚动，不再遮住画面。
 

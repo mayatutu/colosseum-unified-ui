@@ -14,4 +14,4 @@ maintenance:
   root: /path/to/franka-workspace/colosseum-eval-web
   python: /path/to/legacy-env/bin/python
   url: http://127.0.0.1:8080
-# Credentials remain on the Policy host. No credentials are included in this package.
+# Credentials stay in local Client configuration. No credentials are included.

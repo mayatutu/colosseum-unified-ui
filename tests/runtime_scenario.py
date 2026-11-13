@@ -14,21 +14,11 @@ from station import Station
 from store import PendingEvaluation
 
 robot, scenario = sys.argv[1:3]
-workspace = next(p for p in ROOT.parents if (p / 'Official' / 'colosseum-client-main').exists())
-client = (workspace / 'deployment/client-reset-timing-20261027/candidate' if robot == 'franka'
-          else workspace / 'Official/colosseum-client-main')
+client = Path(os.environ.get('COLOSSEUM_TEST_' + robot.upper() + '_CLIENT',
+                             os.environ.get('COLOSSEUM_TEST_CLIENT', str(ROOT.parent / 'client'))))
 sys.path.insert(0, str(client / 'src'))
 import colosseum_client.evaluation as ev
 import colosseum_client.lerobot_export as lx
-if robot == 'yam':
-    # Use the read-only snapshot of the YAM workstation's actual evaluation loop, not only the newer archive.
-    source = ROOT / 'validation/yam-evaluation-source.py'
-    spec = importlib.util.spec_from_file_location('colosseum_client.evaluation', source)
-    ev = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = ev
-    spec.loader.exec_module(ev)
-    import colosseum_client
-    colosseum_client.evaluation = ev
 
 import yaml
 from runtime import Runtime

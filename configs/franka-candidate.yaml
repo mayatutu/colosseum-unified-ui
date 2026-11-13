@@ -1,0 +1,31 @@
+# Copy to franka-candidate.local.yaml and fill in your local values.
+# This template does not start services or configure robot motion.
+robot: franka
+display_name: Franka
+client_root: /path/to/candidate/client
+client_python: /path/to/candidate/envs/client/bin/python
+robot_config: /path/to/private/robot.yaml
+database: ../data/franka.sqlite3
+people: []
+feedback_generation_enabled: false
+robot_rpc: tcp://robot-controller.example.invalid:4242
+translation_url: http://127.0.0.1:8080
+# Opt in only when the existing local backend supports /api/restart_docker.
+# nuc_maintenance_url: http://127.0.0.1:8080
+maintenance:
+  mode: candidate
+  command:
+    - ssh
+    - -o
+    - BatchMode=yes
+    - policy-host.example.invalid
+    - env
+    - COLOSSEUM_CANDIDATE_ROOT=/path/to/candidate
+    - COLOSSEUM_POLICY_UNIT=franka-candidate-policy.service
+    - /path/to/candidate/envs/policy/bin/python
+    - /path/to/candidate/ui/candidate_host.py
+feishu_reporting_enabled: false
+# To retain an existing sender, configure it independently from maintenance.
+# feishu_reporting:
+#   root: /path/to/original-web
+#   python: /path/to/original-web-env/bin/python

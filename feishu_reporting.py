@@ -18,12 +18,46 @@ REPORT = 'ui-feishu.json'
 PHOTOS = 'ui-feishu-photos'
 
 
+def sender_settings(station):
+    """Keep the original sender separate from candidate service maintenance.
+
+    An explicitly supplied reporting section is authoritative: malformed values
+    must not silently select the legacy maintenance sender instead.
+    """
+    if 'feishu_reporting' in station.data:
+        config = station.data['feishu_reporting']
+        if not isinstance(config, dict) or any(
+                not isinstance(config.get(key), str) or not config[key].strip()
+                for key in ('root', 'python')):
+            raise ValueError('feishu_reporting must configure both root and python')
+        return {key: config[key] for key in ('root', 'python')}
+    config = station.data.get('maintenance', {})
+    if not isinstance(config, dict):
+        raise ValueError('Legacy Feishu sender configuration is invalid')
+    return {key: config.get(key) for key in ('root', 'python')}
+
+
+def sender_root(station):
+    value = sender_settings(station)['root']
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError('Feishu sender root is not configured')
+    return Path(value).expanduser()
+
+
+def sender_python(station):
+    value = sender_settings(station)['python']
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError('Feishu sender python is not configured')
+    return value
+
+
 def options(station):
     enabled = station.robot == 'franka' and station.data.get('feishu_reporting_enabled') is True
     if not enabled:
         return {'enabled': False, 'devices': []}
-    root = station.data.get('maintenance', {}).get('root')
-    config = yaml.safe_load((Path(root) / 'config.yaml').read_text(encoding='utf-8'))
+    config = yaml.safe_load((sender_root(station) / 'config.yaml').read_text(encoding='utf-8'))
+    if not isinstance(config, dict):
+        raise ValueError('The original Feishu form configuration is invalid')
     if not config.get('feishu', {}).get('enabled', True) or not config.get('feishu', {}).get('form_url'):
         raise ValueError('The original Feishu form is not enabled')
     return {'enabled': True, 'devices': [x['name'] if isinstance(x, dict) else x for x in config.get('devices', [])]}
@@ -151,7 +185,7 @@ def submit(station, folder, row, sender=None):
             if sender is None:
                 # Same guarded function, form config, translations, success check and receipts as the old UI.
                 from legacy_host import LegacyHost
-                host = LegacyHost(station.data['maintenance']['root'], 'franka', '', '')
+                host = LegacyHost(sender_root(station), 'franka', '', '')
                 host.load_module()
                 config = host.module.CFG
                 if not config.get('feishu', {}).get('enabled', True):

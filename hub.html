@@ -17,7 +17,7 @@
 <main id="frames"></main>
 <div id="robotDialog" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="robotDialogTitle"><form id="robotForm" class="card">
 <h2 id="robotDialogTitle">Add robot</h2><label for="robotName">Robot name</label><input id="robotName" required placeholder="e.g. Franka 1">
-<label for="robotAddress">Client workstation IP / URL</label><input id="robotAddress" placeholder="franka-client.example.invalid">
+<label for="robotAddress">Client workstation IP / URL</label><input id="robotAddress" placeholder="franka-client.example.invalid:8772">
 <p class="hint">Default port: 8772. Use the computer running Client, not the Policy or robot controller address.</p>
 <p class="hint">Robot type and identity are detected automatically when its service is available.</p><p id="robotFormError" class="error" role="alert"></p>
 <div class="row actions"><button type="button" id="robotCancel">Cancel</button><button class="primary" id="robotSave" type="submit">Save and check connection</button></div></form></div>

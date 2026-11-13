@@ -1,5 +1,6 @@
 """Station adaptation of the original UI runtime; loaded only by Client Python."""
 import base64
+import asyncio
 import json
 import os
 import re
@@ -12,6 +13,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from bridge import Bridge
+from candidate_host import CandidateHost
+from nuc_maintenance import NucDockerHost
 from stop_hooks import install_action_hooks
 from store import Store, PendingEvaluation
 from submission import install_api_hook, reconcile, mark_manifest
@@ -52,7 +55,12 @@ class Runtime:
         c.rv.CACHE = c.rv.ROOT.parent / 'eval_review_cache'
         self.root = c.rv.ROOT
         self.legacy = None
+        nuc_url = station.data.get('nuc_maintenance_url')
+        self.nuc = NucDockerHost(nuc_url) if station.robot == 'franka' and nuc_url else None
         maintenance = station.data.get('maintenance', {})
+        self.candidate = CandidateHost(maintenance) if maintenance.get('mode') == 'candidate' else None
+        if self.candidate and (maintenance.get('python') or maintenance.get('root')):
+            raise ValueError('Candidate and legacy maintenance cannot be combined')
         if maintenance.get('python') and maintenance.get('root'):
             self.legacy = Bridge([maintenance['python'], '-u', str(Path(__file__).with_name('legacy_host.py')),
                                   '--root', maintenance['root'], '--robot', station.robot,
@@ -95,7 +103,8 @@ class Runtime:
         c.check_arms = self.check_arms
         c.check_cameras = self.check_cameras
         c.PREVIEW.loop = self.preview_loop
-        c.SERVER = SimpleNamespace(start=lambda: self.policy('start_policy'), stop=lambda: self.policy('stop_policy'),
+        c.SERVER = SimpleNamespace(start=lambda: self.maintain('start_policy') if self.candidate else self.policy('start_policy'),
+                                   stop=lambda: self.maintain('stop_policy') if self.candidate else self.policy('stop_policy'),
                                    status=lambda: self.policy('status'),
                                    pids=lambda: set(self.legacy.call('pids')) if self.legacy else set(), busy=False)
         if self.station.robot == 'franka':
@@ -172,7 +181,7 @@ class Runtime:
             except Exception as e:
                 self.c.S.set_check('server', 'fail', str(e))
         else:
-            self.c.S.set_check('server', 'idle', 'Maintenance backend is not configured')
+            self.policy('status')
         threading.Thread(target=self._poll, daemon=True).start()
         # Retry uncertain confirmations using GET only, never replay submissions at startup.
         threading.Thread(target=self.reconcile_pending, daemon=True).start()
@@ -190,12 +199,12 @@ class Runtime:
                         continue
                     try:
                         with (folder / 'review-feishu.log').open('a', encoding='utf-8') as log:
-                            result = subprocess.run([self.station.data['maintenance']['python'], '-B', '-u',
+                            result = subprocess.run([feishu_reporting.sender_python(self.station), '-B', '-u',
                                 str(Path(__file__).with_name('feishu_reporting.py')), '--station', str(self.station.path),
                                 '--folder', str(folder)], stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
                         if result.returncode and feishu_reporting.status(folder)['status'] == 'queued':
                             raise RuntimeError('Feishu reporter could not start')
-                    except (OSError, RuntimeError):
+                    except (OSError, RuntimeError, ValueError):
                         feishu_reporting.write(folder, {'status': 'error', 'error': 'Feishu reporter could not start'})
             except Exception as exc:
                 print('Feishu reporting: ' + str(exc))
@@ -203,6 +212,11 @@ class Runtime:
 
     def _poll(self):
         while not self.closed.wait(5):
+            if not self.legacy and self.maintenance_lock.acquire(blocking=False):
+                try:
+                    self.policy('status')
+                finally:
+                    self.maintenance_lock.release()
             if self.legacy and not self.maintenance_lock.locked():
                 try:
                     self.policy('status')
@@ -227,9 +241,43 @@ class Runtime:
             api.close()
 
     def policy(self, method, check='server'):
+        candidate = getattr(self, 'candidate', None)
+        if candidate:
+            try:
+                value = candidate.call('gpu' if check == 'gpu' else method)
+                if method in ('status', 'start_policy', 'restart_policy') and check == 'server' and value.get('ok'):
+                    from colosseum_client.local_policy import capabilities
+                    # systemd Type=simple can become active before the socket is listening.
+                    for attempt in range(6 if method != 'status' else 1):
+                        try:
+                            result = asyncio.run(capabilities(self.c.CONFIG.policy_server_url))
+                            break
+                        except Exception:
+                            if method == 'status' or attempt == 5:
+                                raise
+                            time.sleep(0.5)
+                    value['ok'] = result.get('verification_only') is False
+                    value['detail'] += '; endpoint connected' if value['ok'] else '; unexpected verification runtime'
+            except Exception as exc:
+                value = {'ok': False, 'detail': str(exc)}
+            state = 'ok' if value.get('ok') else 'fail'
+            if check == 'server' and value.get('active_state') == 'inactive':
+                state = 'idle'
+            self.c.S.set_check(check, state, value.get('detail', 'Candidate maintenance failed'))
+            return value
         if not self.legacy:
-            self.c.S.set_check(check, 'fail', 'Maintenance backend is not configured')
-            return {'ok': False}
+            if check == 'server' and method in ('status', 'start_policy'):
+                from colosseum_client.local_policy import capabilities
+                try:
+                    result = asyncio.run(capabilities(self.c.CONFIG.policy_server_url))
+                    ok = result.get('verification_only') is False
+                    detail = 'Policy endpoint connected' if ok else 'Expected real candidate Policy runtime'
+                except Exception:
+                    ok, detail = False, 'Policy endpoint unavailable; check candidate service and SSH tunnel'
+                self.c.S.set_check('server', 'ok' if ok else 'fail', detail)
+                return {'ok': ok, 'detail': detail}
+            self.c.S.set_check(check, 'idle', 'Managed on Policy host; UI maintenance is not configured')
+            return {'ok': False, 'detail': 'UI maintenance is not configured'}
         value = self.legacy.call(method)
         self.c.S.set_check(check, 'ok' if value.get('ok') else 'fail',
                            value.get('detail') or value.get('msg') or value.get('error') or method)
@@ -246,6 +294,22 @@ class Runtime:
                 raise RuntimeError('Client is still cleaning up; maintenance has not been executed')
 
     def maintain(self, action):
+        if getattr(self, 'candidate', None):
+            with self.maintenance_lock, self.lock:
+                if action not in ('start_policy', 'stop_policy', 'restart_policy', 'restart_docker'):
+                    raise ValueError('Candidate maintenance only controls the candidate Policy unit')
+                if self.c.recording() or self.round_stop_pending:
+                    raise RuntimeError('End the evaluation before candidate maintenance')
+                if action == 'restart_docker':
+                    if not getattr(self, 'nuc', None):
+                        raise ValueError('NUC Docker maintenance is not configured')
+                    self.c.PREVIEW.stop()
+                    result = self.nuc.restart()
+                    self.c.S.set_check('can', 'idle' if result.get('ok') else 'fail',
+                                       result.get('detail') or result.get('msg') or result.get('error')
+                                       or 'NUC restart requested; check robot readiness before evaluation')
+                    return result
+                return self.policy(action)
         with self.maintenance_lock:
             if action not in ('restart_policy', 'restart_docker', 'restart_can'):
                 raise ValueError('Unknown maintenance action')
@@ -264,7 +328,7 @@ class Runtime:
         resume = form.get('resume') or None
         c.S.set_run(phase='starting', side=None, step=0, max_steps=config.max_trial_steps, eval_id=resume,
                     instruction=config.instruction, message='Asking the Router for two policies…')
-        originals = {name: getattr(c.ev, name, None) for name in ('progress', 'input', 'print')}
+        originals = {name: getattr(c.ev, name, None) for name in ('progress', 'input', 'print', 'prompt_task_difficulty')}
         export = c.record_evals.lx.export_trial
         try:
             eid = c.record_evals.record(config, resume=resume, ask=c.PROMPTS.ask)
@@ -564,7 +628,7 @@ class Runtime:
         rows = []
         for provider in c.CONFIG.llm_providers:
             if self.station.robot == 'franka':
-                ok, message, source = False, 'Managed on the Policy host; not verified here', 'Policy host file'
+                ok, message, source = False, 'Configured on this Client; not verified with provider', 'Client configuration'
             else:
                 ok, message = self.verify_key(provider, c.KEYS.get(provider, ''))
                 source = 'Local configuration'
@@ -574,20 +638,17 @@ class Runtime:
                       'Verified' if rows and all(x['ok'] for x in rows) else 'Configured credentials; see each provider status')
 
     def save_keys(self, body):
+        if self.station.robot == 'franka':
+            from client_credentials import save_client_keys
+            save_client_keys(self.station, body)
+            self.c.CONFIG = self.station.load_client_config()
+            return
         path = self.station.file('database').with_name('llm-settings.json')
         value = json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}
-        if self.station.robot == 'franka':
-            if any(k != 'llm_providers' for k in body):
-                raise ValueError('Franka credentials are managed on the Policy host; this UI only selects providers')
-            selected = body.get('llm_providers')
-            if not isinstance(selected, list) or any(p not in self.c.PROVIDERS for p in selected):
-                raise ValueError('Invalid provider selection')
-            value['llm_providers'] = selected
-        else:
-            keys = value.setdefault('llm_api_keys', {})
-            for provider, key in body.items():
-                if provider in self.c.PROVIDERS and isinstance(key, str) and key.strip():
-                    keys[provider] = key.strip()
+        keys = value.setdefault('llm_api_keys', {})
+        for provider, key in body.items():
+            if provider in self.c.PROVIDERS and isinstance(key, str) and key.strip():
+                keys[provider] = key.strip()
         tmp = path.with_suffix('.tmp')
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, 'w', encoding='utf-8') as f:
@@ -598,6 +659,8 @@ class Runtime:
 
     def check_can(self, reset=False):
         if self.station.robot == 'franka':
+            if reset:
+                return self.maintain('restart_docker')
             return self.check_arms()
         if reset:
             return self.maintain('restart_can')
@@ -750,7 +813,8 @@ class Runtime:
             return c.reply(body)
 
     def capture_policy_log(self):
-        value = self.legacy.call('logs') if self.legacy else {}
+        manager = getattr(self, 'candidate', None) or self.legacy
+        value = manager.call('logs') if manager else {}
         self.policy_log.append_snapshot(value.get('policy_tail') or value.get('POLICY_BUF') or '')
         return value
 
@@ -777,8 +841,11 @@ class Runtime:
                     'scene_reference_enabled': self.station.robot == 'franka',
                     'evaluator_options': self.station.evaluator_options(),
                     'feedback_generation_enabled': self.station.data.get('feedback_generation_enabled') is True,
-                    'managed_providers': list(c.CONFIG.llm_providers), 'settings_mode': 'host' if self.station.robot == 'franka' else 'keys',
-                    'maintenance': ['restart_policy', 'restart_docker'] if self.station.robot == 'franka' else ['restart_policy', 'restart_can']}
+                    'managed_providers': list(c.CONFIG.llm_providers), 'settings_mode': 'keys',
+                    'camera_serials': dict(c.CONFIG.cameras),
+                    'policy_managed': bool(getattr(self, 'candidate', None) or self.legacy),
+                    'maintenance': (['restart_policy'] + (['restart_docker'] if getattr(self, 'nuc', None) else []) if getattr(self, 'candidate', None) else [] if not self.legacy else
+                                    ['restart_policy', 'restart_docker'] if self.station.robot == 'franka' else ['restart_policy', 'restart_can'])}
         if method == 'save_scene':
             with self.lock:
                 if self.station.robot != 'franka':

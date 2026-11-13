@@ -84,8 +84,20 @@ function setupStation(c) {
       const check=CHECKS.find(x=>x[0]===key);check[1]=title;check[2]=detail;
       $('#c-'+key+' h2').textContent=title;$('#d-'+key).textContent=detail;
     }
-    const reset=$('[data-a="can_reset"]');reset.textContent='Restart NUC Docker';reset.onclick=()=>document.querySelector('[data-maintenance="restart_docker"]').click();
+    const reset=$('[data-a="can_reset"]');reset.textContent='Restart NUC Docker';
+    const docker=(c.maintenance||[]).includes('restart_docker');
+    reset.disabled=!docker;
+    reset.title=docker?'':'NUC 重启未接入候选 Policy 管理；需单独硬件操作';
+    reset.onclick=()=>{const button=document.querySelector('[data-maintenance="restart_docker"]');if(button)button.click()};
     $('[data-a="free_gpu"]').textContent='Recover Policy workers';
+  }
+  if(c.policy_managed===false){
+    for(const action of ['free_gpu','can_reset','server_stop']){
+      const button=document.querySelector(`[data-a="${action}"]`);
+      if(button){button.disabled=true;button.title='UI maintenance is not configured';}
+    }
+    const check=document.querySelector('[data-a="server"]');
+    if(check)check.textContent='检查连接';
   }
   applyLanguage();
 }

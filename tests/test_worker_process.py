@@ -7,11 +7,12 @@ from bridge import Bridge
 from station import Station
 
 ROOT = Path(__file__).resolve().parents[1]
-CLIENT = ROOT.parents[1] / 'Official' / 'colosseum-client-main'
-PYTHON = CLIENT / '.planning/colosseum-ui-offline-review/original-runtime312/Scripts/python.exe'
+CLIENT = Path(os.environ.get('COLOSSEUM_TEST_YAM_CLIENT',
+                             os.environ.get('COLOSSEUM_TEST_CLIENT', str(ROOT.parent / 'client'))))
+PYTHON = Path(sys.executable)
 
 
-@pytest.mark.skipif(not PYTHON.exists(), reason='Set up the documented original Python 3.12 test runtime')
+@pytest.mark.skipif(not (CLIENT / 'src/colosseum_client').is_dir(), reason='Set COLOSSEUM_TEST_CLIENT to the compatible Client source')
 def test_real_worker_config_statistics_and_empty_original_review(tmp_path):
     config = tmp_path / 'robot.yaml'
     config.write_text(yaml.safe_dump({'url': 'ws://127.0.0.1:1', 'api_url': 'http://127.0.0.1:1',
